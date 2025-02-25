@@ -39,7 +39,7 @@ typedef enum
 
 typedef struct
 {
-    int fileNumber;
+    int fileID;
     char filename[128];
     int totalChunk;
     /* We will use this hash to avoid users registering the same filedata. Also, it can be used to verify the files*/
@@ -63,9 +63,39 @@ typedef struct
 } Peer;
 
 /*
-Write the function
+we need functions for
 
-register file
+register file in Tracker
+get all files available to leech
+get seeders available to leech by filename
+
+
+Leecher function to Tracker
+request_seeder_all_file()
+request_seeder_by_file(fileID)
+
+
+Seeder function to Tracker
+request_register_file(FileMetaData where fileID set to 0) Tracker will register the file based on the fileHash
+
+
+
+Leecher  to Seeder
+request_bitfield(fileID)
+request_chunk(fileID, chunkIndex)
+
+Seeder to Leecher
+respond_bitfield(fileID)
+respond_chunk(fileID, chunkIndex)
+
+Tracker to Leecher
+respond_seeder_all_file()
+respond_seeder_by_file(fileID)
+
+Tracker to seeder
+respond_register_file() -> return ack
+respond_seeder_all_file() -> return all files' seeders
+respond_seeder_by_file(fileID) -> return seed list
 
 */
 
