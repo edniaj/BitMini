@@ -9,12 +9,14 @@
 
 #define PORT 12345
 #define BUFFER_SIZE 1024
+#define PATH_SIZE 256
 
 int main() {
     int sockfd;
     struct sockaddr_in serv_addr;
     struct hostent *server;
     char buffer[BUFFER_SIZE];
+    char file_path[PATH_SIZE];
 
     // Create a TCP socket.
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -43,10 +45,20 @@ int main() {
         close(sockfd);
         exit(EXIT_FAILURE);
     }
-    printf("Connected to server. Sending file...\n");
+    printf("Connected to server.\n");
 
-    // Open the file (cat.png) for reading in binary mode.
-    FILE *fp = fopen("./cat.png", "rb");
+    // Ask the user for the file path.
+    printf("Enter the path of the file to send: ");
+    if (fgets(file_path, PATH_SIZE, stdin) == NULL) {
+        perror("ERROR reading file path");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+    // Remove newline character if present.
+    file_path[strcspn(file_path, "\n")] = '\0';
+
+    // Open the file for reading in binary mode.
+    FILE *fp = fopen(file_path, "rb");
     if (fp == NULL) {
         perror("ERROR opening file for reading");
         close(sockfd);
