@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <openssl/sha.h> /* SHA-256 hash*/
+#include "meta.h"
+
 #define BUFFER_SIZE 1024
 #define CHUNK_SIZE 1024
 /*
@@ -9,15 +11,6 @@ metadata should be in json format - readability
 
 filename should be given by User
 */
-
-typedef struct
-{
-    int fileID;
-    int totalChunk;
-    int totalByte;
-    char filename[128];
-    uint8_t fileHash[32]; // SHA-256 hash
-} FileMetadata;
 
 void create_metadata(char *binary_filepath, FileMetadata *fileMetaData)
 {
@@ -92,9 +85,9 @@ void read_metadata(const char *meta_filename)
 
     printf("\n=== Read Metadata ===\n");
     printf("File Name: %s\n", fileMetaData.filename);
-    printf("File ID: %d\n", fileMetaData.fileID);
-    printf("Total Chunks: %d\n", fileMetaData.totalChunk);
-    printf("Total Bytes: %d\n", fileMetaData.totalByte);
+    printf("File ID: %zd\n", fileMetaData.fileID);
+    printf("Total Chunks: %zd\n", fileMetaData.totalChunk);
+    printf("Total Bytes: %zd\n", fileMetaData.totalByte);
     printf("Hash: ");
     for (int i = 0; i < 32; i++)
     {
@@ -103,7 +96,7 @@ void read_metadata(const char *meta_filename)
     printf("\n=====================\n");
 }
 
-int main()
+void test_meta()
 {
     char data_filepath[256] = "gray_cat.png";
     char metadata_filepath[256] = "gray_cat.meta";
@@ -115,5 +108,6 @@ int main()
     create_metadata(data_filepath, fileMetaData);
     write_metadata(metadata_filepath, fileMetaData);
     read_metadata(metadata_filepath);
-    return 0;
+    free(fileMetaData);
+    free(testFileMetaData);
 }

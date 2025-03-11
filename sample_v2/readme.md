@@ -1,0 +1,1 @@
+This sample is meant to read / write metadata
