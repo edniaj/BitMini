@@ -260,9 +260,9 @@ static int bitfield_has_chunk(const uint8_t *bitfield, ssize_t i)
 {
     ssize_t byteIndex = i / 8;
     int bitOffset = i % 8;
-    /*
+    /* 
        If the bit is set, it returns nonzero.
-       We'll specifically check if that bit is 1.
+       We'll specifically check if that bit is 1. 
     */
     return (bitfield[byteIndex] & (1 << bitOffset)) != 0;
 }
@@ -337,9 +337,9 @@ int main()
         goto cleanup;
     }
 
-    /*
+    /* 
        Make our local bitfield (also using (totalChunk+7)/8 bytes).
-       Each bit = "do we have chunk i?"
+       Each bit = "do we have chunk i?" 
        Start with all bits = 0 (we have none).
     */
     size_t bitfield_size = (fileMetaData->totalChunk + 7) / 8;
