@@ -1,11 +1,12 @@
 send the data to the server in a shuffled manner.
 
 
-CLIENT
-gcc client.c meta.c -o client -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto && ./meta
+leecher
+gcc leecher.c meta.c -o leecher -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto && ./meta
 
-SERVER
-gcc server.c -o server -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto && ./server
+Seeder
+gcc -I$(brew --prefix openssl)/include -L$(brew --prefix openssl)/lib -lssl -lcrypto -Wno-deprecated-declarations seeder.c database.c -o seeder  && ./seeder
+
 
 meta
 gcc meta.c -o meta -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto && ./meta

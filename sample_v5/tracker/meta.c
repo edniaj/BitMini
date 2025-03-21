@@ -5,16 +5,16 @@
 #include "meta.h"
 
 #define BUFFER_SIZE 1024 * 5
-#define CHUNK_SIZE 1024 
+#define CHUNK_SIZE 1024
+
 /*
 metadata should be in json format - readability
-
 filename should be given by User
 */
 
 void create_metadata(char *binary_filepath, FileMetadata *fileMetaData)
 {
-    int byte_read, total_byte_read, total_chunk = 0;
+    int byte_read = 0, total_byte_read = 0;
     char buffer[BUFFER_SIZE];
     FILE *fp = fopen(binary_filepath, "rb"); /* Use binary to create the fileHash */
 
@@ -27,19 +27,17 @@ void create_metadata(char *binary_filepath, FileMetadata *fileMetaData)
     SHA256_CTX sha256;
     SHA256_Init(&sha256); // Initialize SHA-256 context
 
-    byte_read = fread(buffer, sizeof(char), BUFFER_SIZE, fp);
-    total_byte_read += byte_read;
-    while (byte_read > 0)
+    while ((byte_read = fread(buffer, sizeof(char), BUFFER_SIZE, fp)) > 0)
     {
-        SHA256_Update(&sha256, buffer, byte_read); // Update hash with chunk
-        byte_read = fread(buffer, sizeof(char), BUFFER_SIZE, fp);
         total_byte_read += byte_read;
+        SHA256_Update(&sha256, buffer, byte_read); // Update hash with chunk
     }
+
     fileMetaData->totalChunk = (total_byte_read + CHUNK_SIZE - 1) / CHUNK_SIZE;
     fileMetaData->totalByte = total_byte_read;
     SHA256_Final(fileMetaData->fileHash, &sha256);
 
-    // Print hash as hex string
+    // Print hash as hex string (just for debug)
     printf("Hashed successfully: ");
     for (int i = 0; i < 32; i++)
     {
@@ -49,20 +47,21 @@ void create_metadata(char *binary_filepath, FileMetadata *fileMetaData)
     fclose(fp);
 }
 
+/* Write out the FileMetadata in binary form */
 void write_metadata(const char *meta_filepath, const FileMetadata *fileMetaData)
 {
-    FILE *fp = fopen(meta_filepath, "w");
+    FILE *fp = fopen(meta_filepath, "wb");
     if (fp == NULL)
     {
         perror("ERROR opening metadata file for writing");
         exit(EXIT_FAILURE);
     }
-
+    printf("writing %zd into file of totalbytes", fileMetaData->totalByte);
     fwrite(fileMetaData, sizeof(FileMetadata), 1, fp);
     fclose(fp);
 }
 
-/* Function to read the FileMetadata from a file */
+/* Read the FileMetadata from a .meta file and print it */
 void read_metadata(const char *meta_filename)
 {
     FileMetadata fileMetaData;
@@ -73,14 +72,12 @@ void read_metadata(const char *meta_filename)
         return;
     }
 
-    /* Read the binary directly into the struct */
     if (fread(&fileMetaData, sizeof(FileMetadata), 1, fp) != 1)
     {
         perror("ERROR reading metadata");
         fclose(fp);
         return;
     }
-
     fclose(fp);
 
     printf("\n=== Read Metadata ===\n");
@@ -96,29 +93,44 @@ void read_metadata(const char *meta_filename)
     printf("\n=====================\n");
 }
 
+/*
+   Example test function.
+   We'll create a metadata file for "gray_cat.png" with fileID=1,
+   then write "0001_gray_cat.png.meta" in ./records.
+*/
 void test_meta()
 {
-    char data_filepath[256] = "gray_cat.png";
-    char metadata_filepath[256] = "gray_cat.meta";
+    // We'll assume there's a "records" folder.
+    // If not, you must create it in your environment.
     FileMetadata *fileMetaData = malloc(sizeof(FileMetadata));
-    FileMetadata *testFileMetaData = malloc(sizeof(FileMetadata));
+    if (!fileMetaData)
+    {
+        perror("malloc fileMetaData failed");
+        return;
+    }
 
-    fileMetaData->fileID = 99;
-    strcpy(fileMetaData->filename, "abcde");
-    create_metadata(data_filepath, fileMetaData);
-    write_metadata(metadata_filepath, fileMetaData);
-    read_metadata(metadata_filepath);
+    // Fill out some example data
+    fileMetaData->fileID = 1;
+    strcpy(fileMetaData->filename, "gray_cat.png");
+
+    // Actually compute the hash, totalByte, totalChunk, etc.
+    create_metadata("gray_cat.png", fileMetaData);
+
+    // The final meta filename: "0001_gray_cat.png.meta"
+    char meta_filename[512];
+    snprintf(meta_filename, sizeof(meta_filename), "records/%04zd_%s.meta",
+             fileMetaData->fileID, fileMetaData->filename);
+
+    write_metadata(meta_filename, fileMetaData);
+
+    // Optional: read it back to confirm
+    read_metadata(meta_filename);
+
     free(fileMetaData);
-    free(testFileMetaData);
 }
-/*
-int main(){
-    test_meta();
-    return 0;
-}
-*/
 
-int main(){
+int main()
+{
     test_meta();
     return 0;
 }
