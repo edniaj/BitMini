@@ -34,18 +34,25 @@ typedef struct PeerInfo
     char port[16];
 } PeerInfo;
 
-/* Minimal “header” for the tracker message */
 typedef struct TrackerMessageHeader
 {
     TrackerMessageType type;
-    ssize_t fileID; // which file this references
+    ssize_t bodySize; // size of body
 } TrackerMessageHeader;
 
-/* Minimal “body” for registering a seeder */
-typedef struct TrackerMessage
+typedef union
+{
+    PeerInfo singleSeeder;     // For REGISTER / UNREGISTER
+    PeerInfo seederList[64];   // For returning a list of seeders
+    FileMetadata fileMetadata; // For CREATE_NEW_SEED
+    ssize_t fileID;            // For simple queries
+    char raw[512];             // fallback
+} TrackerMessageBody;
+
+typedef struct
 {
     TrackerMessageHeader header;
-    PeerInfo seederInfo; // we only use seederInfo in this example
+    TrackerMessageBody body;
 } TrackerMessage;
 
 /* ------------------------------------------------------------------------
@@ -94,7 +101,7 @@ static int connect_to_tracker(const char *tracker_ip, int tracker_port)
    Sends a MSG_REQUEST_CREATE_SEEDER to the tracker, including our IP:port
    so other peers know how to connect to us for chunk downloads.
  ------------------------------------------------------------------------ */
-static void register_as_seeder(int tracker_socket, ssize_t fileID,
+static void register_as_seeder(int tracker_socket, 
                                const char *myIP, const char *myPort)
 {
     TrackerMessage msg;
@@ -102,32 +109,39 @@ static void register_as_seeder(int tracker_socket, ssize_t fileID,
 
     // Fill out the message
     msg.header.type = MSG_REQUEST_CREATE_SEEDER;
-    msg.header.fileID = fileID;
-    strncpy(msg.seederInfo.ip_address, myIP, sizeof(msg.seederInfo.ip_address) - 1);
-    strncpy(msg.seederInfo.port, myPort, sizeof(msg.seederInfo.port) - 1);
+    msg.header.bodySize = sizeof(PeerInfo);  // <- This is important!
+    // (fileID is presumably not used by your tracker in CREATE_SEEDER, 
+    // but if you need it, store it in a separate field or union.)
 
-    // Send it to the tracker
-    if (write(tracker_socket, &msg, sizeof(msg)) < 0)
+    // Fill in the PeerInfo union
+    strncpy(msg.body.singleSeeder.ip_address, myIP, 
+            sizeof(msg.body.singleSeeder.ip_address) - 1);
+    strncpy(msg.body.singleSeeder.port, myPort, 
+            sizeof(msg.body.singleSeeder.port) - 1);
+
+    // Send header+body
+    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
     {
-        perror("ERROR writing register seeder message to tracker");
+        perror("ERROR writing tracker header");
+        return;
+    }
+    if (write(tracker_socket, &msg.body, msg.header.bodySize) < 0)
+    {
+        perror("ERROR writing tracker body");
         return;
     }
 
-    // Read the tracker's response (likely a short text message)
-    char buffer[256];
-    memset(buffer, 0, sizeof(buffer));
-    ssize_t rc = read(tracker_socket, buffer, sizeof(buffer) - 1);
+    // Or, if you want to send it in one shot, you can do:
+    //   write(tracker_socket, &msg, sizeof(msg.header) + msg.header.bodySize)
+    // as long as you read them in two steps on the tracker side.
+
+    // Now read the tracker's response
+    char buffer[256] = {0};
+    ssize_t rc = read(tracker_socket, buffer, sizeof(buffer)-1);
     if (rc > 0)
-    {
         printf("Tracker response: %s\n", buffer);
-    }
     else
-    {
-        if (rc == 0)
-            printf("Tracker closed connection unexpectedly.\n");
-        else
-            perror("ERROR reading tracker response");
-    }
+        perror("ERROR reading tracker response");
 }
 
 /* ------------------------------------------------------------------------
@@ -143,7 +157,6 @@ static void get_all_available_files(int tracker_socket)
     TrackerMessage msg;
     memset(&msg, 0, sizeof(msg));
     msg.header.type = MSG_REQUEST_ALL_AVAILABLE_SEED;
-    msg.header.fileID = 0; // not used
 
     // Send request
     if (write(tracker_socket, &msg, sizeof(msg)) < 0)
@@ -221,13 +234,12 @@ static void tracker_cli_loop(int tracker_socket)
         case 1:
         {
             // The user wants to register as a seeder
-            printf("Enter the fileID you want to seed: ");
-            ssize_t fileID;
-            scanf("%zd", &fileID);
+            printf("Register as seeder ");
+
 
             // In a real scenario, you might detect your IP/port dynamically.
-            
-            register_as_seeder(tracker_socket, fileID, "127.0.0.1", "6000");
+
+            register_as_seeder(tracker_socket, "127.0.0.1", "6000");
             break;
         }
         case 2:

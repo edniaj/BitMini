@@ -192,9 +192,9 @@ void scan_and_add_files()
     closedir(dir);
 }
 
-int main(){
-    list_file_entries();
-}
+// int main(){
+//     list_file_entries();
+// }
 
     // /* Main function: demonstration */
     // int main()

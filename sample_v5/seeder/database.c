@@ -67,6 +67,7 @@ void list_file_entries()
     }
 
     FileEntry entry;
+    memset(&entry, 0, sizeof(FileEntry));
     printf("\nCurrent Database Entries:\n");
     printf("---------------------------\n");
 
@@ -182,6 +183,7 @@ void scan_and_add_files()
                 //    if you used the other code that created it that way.
 
                 // 3) Add an entry to meta.log
+                printf("%zd %zd %s", metadata.fileID, metadata.totalByte, entry->d_name);
                 add_file_entry(metadata.fileID, metadata.totalByte, entry->d_name);
             }
         }
@@ -190,7 +192,9 @@ void scan_and_add_files()
     closedir(dir);
 }
 
-
+// int main(){
+//     list_file_entries();
+// }
 
     // /* Main function: demonstration */
     // int main()

@@ -11,14 +11,17 @@
 #include "database.h"
 #include "meta.h"
 
-#define BUFFER_SIZE 1024 * 5
+#define BUFFER_SIZE (1024 * 5)
 #define SERVER_PORT 5555
 #define SERVER_IP "127.0.0.1"
 
 #define MAX_FILES 10000
 #define MAX_SEEDERS_PER_FILE 64
+#define MAX_SEEDERS 1000
 
-/* 🔹 Message Types */
+/* --------------------------------------------------------------------------
+   🔹 Message Types
+   -------------------------------------------------------------------------- */
 typedef enum
 {
     MSG_REQUEST_ALL_AVAILABLE_SEED,
@@ -27,50 +30,71 @@ typedef enum
     MSG_REQUEST_CREATE_SEEDER,
     MSG_REQUEST_DELETE_SEEDER,
     MSG_REQUEST_SEEDING_SEED,
-    MSG_REQUEST_CREATE_NEW_SEED
+    MSG_REQUEST_CREATE_NEW_SEED,
+    MSG_REQUEST_PARTICIPATE_SEED,
+    MSG_REQUEST_UNPARTICIPATE_SEED
 } TrackerMessageType;
 
-/* 🔹 Tracker Message Header */
-typedef struct TrackerMessageHeader
-{
-    TrackerMessageType type;
-    ssize_t fileID;
-} TrackerMessageHeader;
-
-/* 🔹 Peer Info */
+/* --------------------------------------------------------------------------
+   🔹 Peer Info
+   -------------------------------------------------------------------------- */
 typedef struct PeerInfo
 {
     char ip_address[64];
     char port[16];
 } PeerInfo;
 
-/* 🔹 Message Body */
-typedef union TrackerMessageBody
+/*
+   Master array: we can store up to 1000 seeders.
+   We'll set any unused slot to have ip_address="", port="".
+*/
+static PeerInfo list_seeders[MAX_SEEDERS];
+
+/*
+   file_to_seeders[fileID][slot] points to one of the PeerInfo in list_seeders
+   or NULL if empty.
+*/
+static PeerInfo *file_to_seeders[MAX_FILES][MAX_SEEDERS_PER_FILE];
+
+/* Keep track of how many seeders we've used in the master array: */
+
+/* --------------------------------------------------------------------------
+   🔹 TrackerMessage
+   -------------------------------------------------------------------------- */
+typedef struct TrackerMessageHeader
 {
-    PeerInfo seederInfo;
-    FileMetadata fileMetadata;
+    TrackerMessageType type;
+    ssize_t bodySize; // size of body
+} TrackerMessageHeader;
+
+typedef union
+{
+    PeerInfo singleSeeder;     // For REGISTER / UNREGISTER
+    PeerInfo seederList[64];   // For returning a list of seeders
+    FileMetadata fileMetadata; // For CREATE_NEW_SEED
+    ssize_t fileID;            // For simple queries
+    char raw[512];             // fallback
 } TrackerMessageBody;
 
-/* 🔹 Tracker Message */
-typedef struct TrackerMessage
+typedef struct
 {
     TrackerMessageHeader header;
     TrackerMessageBody body;
 } TrackerMessage;
 
-/* 🔹 Seeder Tracking */
-static PeerInfo g_seeders[MAX_FILES][MAX_SEEDERS_PER_FILE];
-
-/* -------------------------------------------------------------------------- */
-/* 🔹 Initialize Seeder List */
-void init_seeders()
+/* --------------------------------------------------------------------------
+   (A) init_seeders()
+   -------------------------------------------------------------------------- */
+void init_seeders(void)
 {
-    memset(g_seeders, 0, sizeof(g_seeders));
+    memset(list_seeders, 0, sizeof(list_seeders));
+    memset(file_to_seeders, 0, sizeof(file_to_seeders));
 }
 
-/* -------------------------------------------------------------------------- */
-/* 🔹 Setup Tracker Server */
-int setup_server()
+/* --------------------------------------------------------------------------
+   (B) setup_server()
+   -------------------------------------------------------------------------- */
+int setup_server(void)
 {
     int listen_socketfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_socketfd < 0)
@@ -83,7 +107,7 @@ int setup_server()
     setsockopt(listen_socketfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 
     struct hostent *server = gethostbyname(SERVER_IP);
-    if (server == NULL)
+    if (!server)
     {
         fprintf(stderr, "ERROR, no such host\n");
         close(listen_socketfd);
@@ -114,47 +138,142 @@ int setup_server()
     return listen_socketfd;
 }
 
-/* -------------------------------------------------------------------------- */
-/* 🔹 Handle Seeder Registration */
-void handle_create_seeder(int client_socket)
+/* --------------------------------------------------------------------------
+   (C) find_peer()
+   Returns pointer to PeerInfo in list_seeders if it matches ip+port,
+   or NULL if not found.
+   -------------------------------------------------------------------------- */
+PeerInfo *find_peer(const PeerInfo *p)
 {
-    TrackerMessage msg;
-    if (read(client_socket, &msg, sizeof(msg)) <= 0)
+    for (int i = 0; i < MAX_SEEDERS; i++)
     {
-        perror("ERROR reading create seeder request");
-        return;
-    }
-
-    ssize_t fileID = msg.header.fileID;
-    char *ip = msg.body.seederInfo.ip_address;
-    char *port = msg.body.seederInfo.port;
-
-    int status = -1;
-    for (int i = 0; i < MAX_SEEDERS_PER_FILE; i++)
-    {
-        if (g_seeders[fileID][i].ip_address[0] == '\0')
+        if (strcmp(list_seeders[i].ip_address, p->ip_address) == 0 &&
+            strcmp(list_seeders[i].port, p->port) == 0)
         {
-            strncpy(g_seeders[fileID][i].ip_address, ip, sizeof(g_seeders[fileID][i].ip_address) - 1);
-            strncpy(g_seeders[fileID][i].port, port, sizeof(g_seeders[fileID][i].port) - 1);
-            status = 0; // Successfully added
-            break;
+            return &list_seeders[i];
+        }
+    }
+    return NULL;
+}
+
+/* --------------------------------------------------------------------------
+   (D) add_peer()
+   If we have room, add a new PeerInfo to list_seeders,
+   then return a pointer to it. Otherwise return NULL.
+   -------------------------------------------------------------------------- */
+PeerInfo *add_peer(const PeerInfo *p)
+{
+    // 1) Look for a free slot in list_seeders
+    for (int i = 0; i < MAX_SEEDERS; i++)
+    {
+        // A "free" slot can be identified by empty ip_address or some "inactive" marker
+        if (list_seeders[i].ip_address[0] == '\0')
+        {
+            // Found an empty slot, fill it
+            strcpy(list_seeders[i].ip_address, p->ip_address);
+            strcpy(list_seeders[i].port, p->port);
+            return &list_seeders[i];
         }
     }
 
-    char response[256];
-    if (status == 0)
-        strcpy(response, "Seeder successfully registered.\n");
-    else
-        strcpy(response, "Failed to register seeder (max limit reached).\n");
-
-    write(client_socket, response, strlen(response));
+    // If we reach here, no free slot was found
+    return NULL;
 }
 
-/* -------------------------------------------------------------------------- */
-/* 🔹 Handle Request for Available Files */
+void remove_peer(PeerInfo *p)
+{
+    // Mark the slot as free by clearing IP/port
+    p->ip_address[0] = '\0';
+    p->port[0] = '\0';
+}
+
+/* --------------------------------------------------------------------------
+   (E) add_seeder_to_file()
+   Adds a pointer to this PeerInfo in file_to_seeders[fileID].
+   For now, we'll assume fileID=0 (or you can pass it in).
+   -------------------------------------------------------------------------- */
+int add_seeder_to_file(ssize_t fileID, PeerInfo *p)
+{
+    // First, check if already present
+    for (int i = 0; i < MAX_SEEDERS_PER_FILE; i++)
+    {
+        if (file_to_seeders[fileID][i] == p)
+        {
+            // It's already in the list for this file
+            return 1; // some code meaning "already present"
+        }
+    }
+
+    // Not found, so find a free slot
+    for (int i = 0; i < MAX_SEEDERS_PER_FILE; i++)
+    {
+        if (file_to_seeders[fileID][i] == NULL)
+        {
+            file_to_seeders[fileID][i] = p;
+            return 0; // success
+        }
+    }
+
+    // No space available
+    return -1;
+}
+
+int remove_seeder_from_file(ssize_t fileID, PeerInfo *p)
+{
+    for (int i = 0; i < MAX_SEEDERS_PER_FILE; i++)
+    {
+        if (file_to_seeders[fileID][i] == p)
+        {
+            file_to_seeders[fileID][i] = NULL;
+            return 0; // success
+        }
+    }
+    return -1; // not found
+}
+
+/* --------------------------------------------------------------------------
+   (F) handle_create_seeder()
+   "Registers" the seeder into our master array if not present,
+   then references it in file_to_seeders[0].
+   -------------------------------------------------------------------------- */
+void handle_create_seeder(int client_socket, const PeerInfo *p)
+{
+    // 1) Check if peer already in master array
+    PeerInfo *existing = find_peer(p);
+    if (existing)
+    {
+        // It's already known
+        printf("Peer already in list: %s:%s\n", p->ip_address, p->port);
+        char resp[] = "Seeder already registered in master array.\n";
+        write(client_socket, resp, strlen(resp));
+        return;
+    }
+
+    // 2) If not found, add to master list
+    PeerInfo *newPeer = add_peer(p);
+    if (!newPeer)
+    {
+        // Master array is full
+        char resp[] = "No space in the master seeder list.\n";
+        write(client_socket, resp, strlen(resp));
+        return;
+    }
+
+    // 3) Respond success to client
+    printf("New seeder added to master array: %s:%s\n",
+           newPeer->ip_address, newPeer->port);
+
+    char resp[] = "New seeder registered in master array.\n";
+    write(client_socket, resp, strlen(resp));
+}
+
+/* --------------------------------------------------------------------------
+   (G) handle_request_all_available_files()
+   Example from your snippet
+   -------------------------------------------------------------------------- */
 void handle_request_all_available_files(int client_socket)
 {
-    size_t fileCount;
+    size_t fileCount = 0;
     FileEntry *fileList = load_file_entries(&fileCount);
 
     if (!fileList || fileCount == 0)
@@ -172,58 +291,105 @@ void handle_request_all_available_files(int client_socket)
     free(fileList);
 }
 
-/* -------------------------------------------------------------------------- */
-/* 🔹 Handle Client Request */
+/* --------------------------------------------------------------------------
+   (H) handle_client()
+   Reads the header + body from the socket,
+   and dispatches to the correct handler.
+   -------------------------------------------------------------------------- */
 void handle_client(int client_socket)
 {
-    TrackerMessage msg;
-    ssize_t bytes_read = read(client_socket, &msg, sizeof(msg));
-
-    if (bytes_read <= 0)
+    while (1)
     {
-        perror("ERROR reading from client");
-        return;
-    }
+        TrackerMessageHeader header;
+        ssize_t bytes_read = read(client_socket, &header, sizeof(header));
+        if (bytes_read <= 0)
+        {
+            if (bytes_read < 0)
+                perror("ERROR reading header");
+            else
+                printf("Client disconnected.\n");
+            close(client_socket);
+            return;
+        }
 
-    printf("Received request type: %d for fileID: %zd\n", msg.header.type, msg.header.fileID);
+        // Check if bodySize is reasonable
+        if (header.bodySize > sizeof(TrackerMessageBody))
+        {
+            fprintf(stderr, "ERROR: bodySize too large (%zd)\n", header.bodySize);
+            close(client_socket);
+            return;
+        }
 
-    switch (msg.header.type)
-    {
-    case MSG_REQUEST_CREATE_SEEDER:
-        handle_create_seeder(client_socket);
-        break;
+        // Read the body
+        TrackerMessageBody body;
+        memset(&body, 0, sizeof(body));
+        if (header.bodySize > 0)
+        {
+            bytes_read = read(client_socket, &body, header.bodySize);
+            if (bytes_read < 0)
+            {
+                perror("ERROR reading body");
+                close(client_socket);
+                return;
+            }
+            if (bytes_read < header.bodySize)
+            {
+                fprintf(stderr, "Partial read: expected %zd, got %zd\n", header.bodySize, bytes_read);
+                close(client_socket);
+                return;
+            }
+        }
 
-    case MSG_REQUEST_ALL_AVAILABLE_SEED:
-        handle_request_all_available_files(client_socket);
-        break;
-
-    default:
+        // Dispatch
+        switch (header.type)
+        {
+        case MSG_REQUEST_CREATE_SEEDER:
+        {
+            // Expecting a PeerInfo in body.singleSeeder
+            if (header.bodySize == sizeof(PeerInfo))
+            {
+                handle_create_seeder(client_socket, &body.singleSeeder);
+            }
+            else
+            {
+                char err[] = "Invalid body size for CREATE_SEEDER.\n";
+                write(client_socket, err, strlen(err));
+            }
+            break;
+        }
+        case MSG_REQUEST_ALL_AVAILABLE_SEED:
+        {
+            handle_request_all_available_files(client_socket);
+            break;
+        }
+        default:
         {
             char error_msg[] = "Unknown request type.\n";
             write(client_socket, error_msg, strlen(error_msg));
-            printf("⚠️  Unknown request type received: %d\n", msg.header.type);
+            fprintf(stderr, "⚠️ Unknown request type: %d\n", header.type);
             break;
         }
-    }
-
-    printf("Closing connection with client.\n");
-    close(client_socket);
+        }
+    } // end while(1)
 }
 
-/* -------------------------------------------------------------------------- */
-/* 🔹 Main Tracker Server */
-int main()
+/* --------------------------------------------------------------------------
+   (I) Main
+   -------------------------------------------------------------------------- */
+int main(void)
 {
     init_seeders();
 
     int listen_socketfd = setup_server();
 
-    struct sockaddr_in client_addr;
-    socklen_t client_addr_length = sizeof(client_addr);
-
     while (1)
     {
-        int client_socket = accept(listen_socketfd, (struct sockaddr *)&client_addr, &client_addr_length);
+        struct sockaddr_in client_addr;
+        socklen_t client_addr_length = sizeof(client_addr);
+
+        int client_socket = accept(listen_socketfd,
+                                   (struct sockaddr *)&client_addr,
+                                   &client_addr_length);
         if (client_socket < 0)
         {
             perror("ERROR accepting connection");
@@ -232,6 +398,7 @@ int main()
 
         printf("✅ New connection established.\n");
         handle_client(client_socket);
+        // handle_client() returns after the client disconnects or error
     }
 
     close(listen_socketfd);
