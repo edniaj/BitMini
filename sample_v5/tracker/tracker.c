@@ -9,7 +9,6 @@
 #include <errno.h>
 
 #include "database.h"
-#include "meta.h"
 
 #define BUFFER_SIZE (1024 * 5)
 #define SERVER_PORT 5555
@@ -24,7 +23,7 @@
    -------------------------------------------------------------------------- */
 typedef enum
 {
-    MSG_REQUEST_ALL_AVAILABLE_SEED,
+    MSG_REQUEST_ALL_AVAILABLE_SEED = 0,
     MSG_REQUEST_META_DATA,
     MSG_REQUEST_SEEDER,
     MSG_REQUEST_CREATE_SEEDER,
@@ -32,7 +31,8 @@ typedef enum
     MSG_REQUEST_SEEDING_SEED,
     MSG_REQUEST_CREATE_NEW_SEED,
     MSG_REQUEST_PARTICIPATE_SEED,
-    MSG_REQUEST_UNPARTICIPATE_SEED
+    MSG_REQUEST_UNPARTICIPATE_SEED,
+    MSG_ACK_CREATE_NEW_SEED // ← Add this line
 } TrackerMessageType;
 
 /* --------------------------------------------------------------------------
@@ -291,6 +291,40 @@ void handle_request_all_available_files(int client_socket)
     free(fileList);
 }
 
+void handle_create_new_seed(int client_socket, const FileMetadata *meta)
+{
+    // Step 1: Generate a new fileID and write .meta to disk
+    ssize_t fileID = add_new_file(meta);
+    if (fileID < 0)
+    {
+        char err[] = "Failed to create new file entry.\n";
+        write(client_socket, err, strlen(err));
+        return;
+    }
+
+    // Step 2: Print info
+    printf("\n📦 New Seed Created:\n");
+    printf(" • Filename    : %s\n", meta->filename); // original filename from client
+    printf(" • Total Chunks: %zd\n", meta->totalChunk);
+    printf(" • Total Bytes : %zd\n", meta->totalByte);
+    printf(" • fileID      : %zd\n", fileID);
+    printf(" • File Hash   : ");
+    for (int i = 0; i < 32; i++)
+        printf("%02x", meta->fileHash[i]);
+    printf("\n");
+
+    // Step 3: Acknowledge with new fileID
+    TrackerMessageHeader ack_header;
+    ack_header.type = MSG_ACK_CREATE_NEW_SEED;
+    ack_header.bodySize = sizeof(ssize_t);
+
+    TrackerMessageBody ack_body = {0};
+    ack_body.fileID = fileID;
+
+    write(client_socket, &ack_header, sizeof(ack_header));
+    write(client_socket, &ack_body, sizeof(ack_body)); // 👈 send full TrackerMessageBody
+}
+
 /* --------------------------------------------------------------------------
    (H) handle_client()
    Reads the header + body from the socket,
@@ -298,11 +332,24 @@ void handle_request_all_available_files(int client_socket)
    -------------------------------------------------------------------------- */
 void handle_client(int client_socket)
 {
+    TrackerMessageHeader header;
+    TrackerMessageBody body;
+    memset(&header, 0, sizeof(header));
+    memset(&body, 0, sizeof(body));
     while (1)
     {
-        TrackerMessageHeader header;
+        printf("\nListening to connections :)\n");
+        fflush(stdout); // ✅ force print to terminal
+
+        // 1) Read header
         ssize_t bytes_read = read(client_socket, &header, sizeof(header));
-        if (bytes_read <= 0)
+
+        if (bytes_read > 0)
+        {
+            printf("📩 Read header: type=%d, bodySize=%zd\n", header.type, header.bodySize);
+        }
+        else
+
         {
             if (bytes_read < 0)
                 perror("ERROR reading header");
@@ -313,16 +360,10 @@ void handle_client(int client_socket)
         }
 
         // Check if bodySize is reasonable
-        if (header.bodySize > sizeof(TrackerMessageBody))
-        {
-            fprintf(stderr, "ERROR: bodySize too large (%zd)\n", header.bodySize);
-            close(client_socket);
-            return;
-        }
+        // 2) If bodySize>0, read body
 
         // Read the body
-        TrackerMessageBody body;
-        memset(&body, 0, sizeof(body));
+
         if (header.bodySize > 0)
         {
             bytes_read = read(client_socket, &body, header.bodySize);
@@ -362,6 +403,20 @@ void handle_client(int client_socket)
             handle_request_all_available_files(client_socket);
             break;
         }
+        case MSG_REQUEST_CREATE_NEW_SEED:
+        {
+            if (header.bodySize == sizeof(FileMetadata))
+            {
+                handle_create_new_seed(client_socket, &body.fileMetadata);
+            }
+            else
+            {
+                char err[] = "Invalid body size for CREATE_NEW_SEED.\n";
+                write(client_socket, err, strlen(err));
+            }
+            break;
+        }
+
         default:
         {
             char error_msg[] = "Unknown request type.\n";
@@ -398,7 +453,6 @@ int main(void)
 
         printf("✅ New connection established.\n");
         handle_client(client_socket);
-        // handle_client() returns after the client disconnects or error
     }
 
     close(listen_socketfd);

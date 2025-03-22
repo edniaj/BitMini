@@ -16,15 +16,19 @@
        - MSG_REQUEST_CREATE_SEEDER
        - MSG_REQUEST_ALL_AVAILABLE_SEED
  ------------------------------------------------------------------------ */
+
 typedef enum
 {
-    MSG_REQUEST_ALL_AVAILABLE_SEED = 0, // ask tracker for full list
-    MSG_REQUEST_META_DATA,              // (not used in this sample)
+    MSG_REQUEST_ALL_AVAILABLE_SEED = 0,
+    MSG_REQUEST_META_DATA,
     MSG_REQUEST_SEEDER,
-    MSG_REQUEST_CREATE_SEEDER, // register as a seeder
+    MSG_REQUEST_CREATE_SEEDER,
     MSG_REQUEST_DELETE_SEEDER,
     MSG_REQUEST_SEEDING_SEED,
-    MSG_REQUEST_CREATE_NEW_SEED
+    MSG_REQUEST_CREATE_NEW_SEED,
+    MSG_REQUEST_PARTICIPATE_SEED,
+    MSG_REQUEST_UNPARTICIPATE_SEED,
+    MSG_ACK_CREATE_NEW_SEED //  - DONE
 } TrackerMessageType;
 
 /* We only need PeerInfo + minimal message container */
@@ -101,76 +105,76 @@ static int connect_to_tracker(const char *tracker_ip, int tracker_port)
    Sends a MSG_REQUEST_CREATE_SEEDER to the tracker, including our IP:port
    so other peers know how to connect to us for chunk downloads.
  ------------------------------------------------------------------------ */
-static void register_as_seeder(int tracker_socket, 
-                               const char *myIP, const char *myPort)
+/******************************************************************************
+ * 1) register_as_seeder()
+ *    Sends MSG_REQUEST_CREATE_SEEDER to the tracker with our IP:port.
+ ******************************************************************************/
+static void register_as_seeder(int tracker_socket, const char *myIP, const char *myPort)
 {
     TrackerMessage msg;
     memset(&msg, 0, sizeof(msg));
 
-    // Fill out the message
+    // Fill out header
     msg.header.type = MSG_REQUEST_CREATE_SEEDER;
-    msg.header.bodySize = sizeof(PeerInfo);  // <- This is important!
-    // (fileID is presumably not used by your tracker in CREATE_SEEDER, 
-    // but if you need it, store it in a separate field or union.)
+    msg.header.bodySize = sizeof(PeerInfo);
 
-    // Fill in the PeerInfo union
-    strncpy(msg.body.singleSeeder.ip_address, myIP, 
+    // Fill out body (PeerInfo)
+    strncpy(msg.body.singleSeeder.ip_address, myIP,
             sizeof(msg.body.singleSeeder.ip_address) - 1);
-    strncpy(msg.body.singleSeeder.port, myPort, 
+    strncpy(msg.body.singleSeeder.port, myPort,
             sizeof(msg.body.singleSeeder.port) - 1);
 
-    // Send header+body
+    // 1) Write the header
     if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
     {
-        perror("ERROR writing tracker header");
+        perror("ERROR writing tracker header (CREATE_SEEDER)");
         return;
     }
-    if (write(tracker_socket, &msg.body, msg.header.bodySize) < 0)
+    // 2) Write the body (exactly bodySize bytes)
+    if (write(tracker_socket, &msg.body.singleSeeder, msg.header.bodySize) < 0)
     {
-        perror("ERROR writing tracker body");
+        perror("ERROR writing tracker body (CREATE_SEEDER)");
         return;
     }
 
-    // Or, if you want to send it in one shot, you can do:
-    //   write(tracker_socket, &msg, sizeof(msg.header) + msg.header.bodySize)
-    // as long as you read them in two steps on the tracker side.
-
-    // Now read the tracker's response
+    // Read a text response from the tracker (in your code, it’s just a string)
     char buffer[256] = {0};
-    ssize_t rc = read(tracker_socket, buffer, sizeof(buffer)-1);
+    ssize_t rc = read(tracker_socket, buffer, sizeof(buffer) - 1);
     if (rc > 0)
         printf("Tracker response: %s\n", buffer);
     else
-        perror("ERROR reading tracker response");
+        perror("ERROR reading tracker response (CREATE_SEEDER)");
 }
 
-/* ------------------------------------------------------------------------
-   (D) FUNCTION: get_all_available_files()
-   Sends a MSG_REQUEST_ALL_AVAILABLE_SEED to the tracker to list files.
-   In your existing tracker, it first sends a size_t “fileCount” or
-   possibly a text if none. Then it sends an array of FileEntry, etc.
-
-   We'll do a minimal read of whatever the tracker responds with.
- ------------------------------------------------------------------------ */
+/******************************************************************************
+ * 2) get_all_available_files()
+ *    Sends MSG_REQUEST_ALL_AVAILABLE_SEED to list all files on the tracker.
+ ******************************************************************************/
 static void get_all_available_files(int tracker_socket)
 {
     TrackerMessage msg;
     memset(&msg, 0, sizeof(msg));
-    msg.header.type = MSG_REQUEST_ALL_AVAILABLE_SEED;
 
-    // Send request
-    if (write(tracker_socket, &msg, sizeof(msg)) < 0)
+    // Fill out header
+    msg.header.type = MSG_REQUEST_ALL_AVAILABLE_SEED;
+    msg.header.bodySize = 0;  // No body for this request
+
+    // 1) Write just the header
+    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
     {
-        perror("ERROR writing request all seeds to tracker");
+        perror("ERROR writing header (ALL_AVAILABLE_SEED)");
         return;
     }
+    // (No body to write since bodySize=0)
 
-    // Try reading first the fileCount (size_t)
+    // --- Read the tracker response ---
+
+    // First try reading a size_t fileCount
     size_t fileCount = 0;
     ssize_t rc = read(tracker_socket, &fileCount, sizeof(fileCount));
     if (rc <= 0)
     {
-        // Possibly a text message from tracker. Let's read as text:
+        // If we fail to read fileCount, maybe tracker sent a text error message
         char textBuf[256];
         memset(textBuf, 0, sizeof(textBuf));
         rc = read(tracker_socket, textBuf, sizeof(textBuf) - 1);
@@ -180,12 +184,12 @@ static void get_all_available_files(int tracker_socket)
         }
         else
         {
-            perror("ERROR reading from tracker");
+            perror("ERROR reading from tracker (ALL_AVAILABLE_SEED)");
         }
         return;
     }
 
-    // If we got fileCount, read that many FileEntry structs
+    // If we did get fileCount, read that many FileEntry structs
     printf("Tracker says there are %zu files.\n", fileCount);
     for (size_t i = 0; i < fileCount; i++)
     {
@@ -196,9 +200,78 @@ static void get_all_available_files(int tracker_socket)
             perror("ERROR reading file entry from tracker");
             return;
         }
-        // Print correctly using only fields that exist in FileEntry
-        printf(" -> FileID: %04zd TotalByte: %zd MetaFile: %s\n", entry.fileID, entry.totalBytes, entry.metaFilename);
+        printf(" -> FileID: %04zd TotalByte: %zd MetaFile: %s\n",
+               entry.fileID, entry.totalBytes, entry.metaFilename);
     }
+}
+
+/******************************************************************************
+ * 3) request_create_new_seed()
+ *    Sends MSG_REQUEST_CREATE_NEW_SEED to the tracker with a new file’s metadata.
+ ******************************************************************************/
+static void request_create_new_seed(int tracker_socket, const char *binary_file_path)
+{
+    // 1) Build partial metadata (with no final fileID).
+    FileMetadata fileMeta;
+    memset(&fileMeta, 0, sizeof(fileMeta));
+    create_metadata(binary_file_path, &fileMeta);
+    fileMeta.fileID = -1;  // Let the tracker assign the real fileID
+
+    // 2) Send MSG_REQUEST_CREATE_NEW_SEED to Tracker
+    TrackerMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.header.type = MSG_REQUEST_CREATE_NEW_SEED;
+    msg.header.bodySize = sizeof(FileMetadata);
+    msg.body.fileMetadata = fileMeta;
+
+    // Send header + body
+    write(tracker_socket, &msg.header, sizeof(msg.header));
+    write(tracker_socket, &msg.body.fileMetadata, msg.header.bodySize);
+
+    // 3) Read ACK (the new fileID)
+    TrackerMessageHeader ack_header;
+    read(tracker_socket, &ack_header, sizeof(ack_header));
+    if (ack_header.type != MSG_ACK_CREATE_NEW_SEED)
+    {
+        fprintf(stderr, "Did not receive MSG_ACK_CREATE_NEW_SEED.\n");
+        return;
+    }
+
+    if (ack_header.bodySize != sizeof(ssize_t))
+    {
+        fprintf(stderr, "ACK bodySize mismatch.\n");
+        return;
+    }
+
+    TrackerMessageBody ack_body;
+    read(tracker_socket, &ack_body, ack_header.bodySize);
+
+    ssize_t newFileID = ack_body.fileID;
+    printf("Tracker assigned fileID: %zd\n", newFileID);
+
+    // 4) Now that we have a fileID, generate .meta path in the same folder as the PNG
+    char *metaPath = generate_metafile_filepath_with_id(newFileID, binary_file_path);
+    if (!metaPath)
+    {
+        fprintf(stderr, "Failed to generate .meta path.\n");
+        return;
+    }
+
+    // 5) Update our FileMetadata with the real fileID
+    fileMeta.fileID = newFileID;
+
+    // 6) Write the metadata to disk
+    if (write_metadata(metaPath, &fileMeta) != 0) 
+    {
+        fprintf(stderr, "Failed to write metadata: %s\n", metaPath);
+        // handle error if needed
+    }
+    else
+    {
+        printf("Wrote metadata file: %s\n", metaPath);
+    }
+
+    free(metaPath);
 }
 
 /* ------------------------------------------------------------------------
@@ -207,47 +280,66 @@ static void get_all_available_files(int tracker_socket)
        2) Get all seeds
        0) Exit
  ------------------------------------------------------------------------ */
+
+
+
+
 static void tracker_cli_loop(int tracker_socket)
 {
+    char *input = malloc(250);
+    if (!input)
+    {
+        perror("Failed to allocate input buffer");
+        return;
+    }
+
     while (1)
     {
         printf("\n--- Tracker CLI Options ---\n");
         printf("1) Register as seeder\n");
         printf("2) Get all available files\n");
+        printf("3) Create new seed\n");
         printf("0) Exit\n");
         printf("Choose an option: ");
 
-        int choice;
-        if (scanf("%d", &choice) != 1)
+        if (!fgets(input, 250, stdin))
         {
-            printf("Invalid input.\n");
-            // Clear out stdin if needed, or break
-            break;
+            printf("Error reading input.\n");
+            continue;
         }
+
+        // Remove trailing newline
+        input[strcspn(input, "\n")] = 0;
+
+        int choice = atoi(input); // Convert string to integer
 
         switch (choice)
         {
         case 0:
             printf("Exiting CLI...\n");
-            return; // exit the loop
+            free(input);
+            return;
 
         case 1:
-        {
-            // The user wants to register as a seeder
-            printf("Register as seeder ");
-
-
-            // In a real scenario, you might detect your IP/port dynamically.
-
+            printf("Registering as seeder...\n");
             register_as_seeder(tracker_socket, "127.0.0.1", "6000");
             break;
-        }
+
         case 2:
-        {
-            // The user wants to list all known seeds
             get_all_available_files(tracker_socket);
             break;
-        }
+
+        case 3:
+            printf("Folder directory: ");
+            if (!fgets(input, 250, stdin))
+            {
+                printf("Error reading directory.\n");
+                break;
+            }
+            input[strcspn(input, "\n")] = 0; // Trim newline
+            request_create_new_seed(tracker_socket, input);
+            break;
+
         default:
             printf("Unknown option.\n");
             break;
@@ -307,7 +399,7 @@ static void create_chunkHash(TransferChunk *chunk)
 int initialize_seeder()
 {
     /* Step 1: Load Metadata */
-    FILE *meta_file_fp = fopen("gray_cat.meta", "rb");
+    FILE *meta_file_fp = fopen("./storage_metafile/gray_cat.meta", "rb");
     if (!meta_file_fp)
     {
         perror("ERROR opening meta file");
@@ -332,7 +424,7 @@ int initialize_seeder()
     fclose(meta_file_fp);
 
     /* Step 2: Open Data File */
-    data_file_fp = fopen("gray_cat.png", "rb");
+    data_file_fp = fopen("./storage_downloads/gray_cat.png", "rb");
     if (!data_file_fp)
     {
         perror("ERROR opening data file");
@@ -351,7 +443,7 @@ int initialize_seeder()
         return -1;
     }
 
-    FILE *bitfield_file_fp = fopen("gray_cat.bitfield", "rb");
+    FILE *bitfield_file_fp = fopen("./storage_bitfield/gray_cat.bitfield", "rb");
     if (!bitfield_file_fp)
     {
         perror("ERROR opening bitfield file");
@@ -491,11 +583,11 @@ void handle_client_requests(int client_socketfd)
 int main()
 {
     // 1) Initialize local .meta, .bitfield, etc.
-    if (initialize_seeder() != 0)
-    {
-        fprintf(stderr, "Failed to init seeder.\n");
-        return 1;
-    }
+    // if (initialize_seeder() != 0)
+    // {
+    //     fprintf(stderr, "Failed to init seeder.\n");
+    //     return 1;
+    // }
 
     // 2) Connect to tracker (change IP/port as needed):
     //    e.g. if your tracker is on 192.168.1.10, port 5555:

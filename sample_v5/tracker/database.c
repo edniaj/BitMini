@@ -6,13 +6,102 @@
 #include <sys/types.h>
 #include "database.h"
 #include "meta.h" // For FileMetadata struct and reading
-// #include "metadata.h"  // If you had a separate header for read_metadata()
 
-#define RECORDS_FOLDER "records" // Directory containing .meta files
-#define META_LOG_FILE "meta.log" // The meta log file
+// Directory and file definitions
+#define RECORDS_FOLDER "records" 
+#define META_LOG_FILE  "meta.log"
 
+// --------------------------------------------------------
+// Forward Declarations
+// --------------------------------------------------------
+static ssize_t get_next_available_fileID(void);
 
-/* Function to read a single .meta file into a FileMetadata struct */
+// --------------------------------------------------------
+//  1) add_new_file() 
+//     Creates a new fileID, writes the .meta to "records/", 
+//     and appends an entry to meta.log. Returns the fileID.
+//     On error, returns -1.
+// --------------------------------------------------------
+ssize_t add_new_file(const FileMetadata *meta)
+{
+    // 1) Figure out the next available fileID
+    ssize_t newID = get_next_available_fileID();
+    if (newID < 1) {
+        fprintf(stderr, "Failed to get a valid fileID.\n");
+        return -1;
+    }
+
+    // 2) Construct a filename like "0005_originalname.meta"
+    //    or "0005_filename.png.meta" – your choice. 
+    //    Below we show:  0005_<meta->filename>.meta
+    char newFilename[512];
+    snprintf(newFilename, sizeof(newFilename), 
+             "%04zd_%s.meta", newID, meta->filename);
+
+    // 3) Full path in the records folder
+    char fullPath[512];
+    int written = snprintf(fullPath, sizeof(fullPath),
+                           "%s/%s", RECORDS_FOLDER, newFilename);
+    if (written < 0 || written >= (int)sizeof(fullPath)) {
+        fprintf(stderr, "Path truncated or error in snprintf!\n");
+        return -1;
+    }
+
+    // 4) Write the FileMetadata to "records/0005_filename.meta"
+    FILE *fp = fopen(fullPath, "wb");
+    if (!fp) {
+        perror("Error opening new .meta file in records/");
+        return -1;
+    }
+
+    // We'll make a temp copy so we can assign the newID in the struct
+    FileMetadata temp = *meta;
+    temp.fileID = newID;
+
+    if (fwrite(&temp, sizeof(FileMetadata), 1, fp) != 1) {
+        perror("Error writing FileMetadata to file");
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+
+    // 5) Append an entry to meta.log
+    //    (This function is from your existing code below.)
+    add_file_entry(newID, temp.totalByte, newFilename);
+
+    // 6) Return the newly assigned fileID
+    return newID;
+}
+
+// --------------------------------------------------------
+//  2) get_next_available_fileID() 
+//     Scans meta.log for the largest fileID in use, returns maxID+1
+// --------------------------------------------------------
+static ssize_t get_next_available_fileID(void)
+{
+    FILE *dbFile = fopen(META_LOG_FILE, "rb");
+    if (!dbFile) {
+        // If meta.log doesn't exist, start at 1
+        return 1;
+    }
+
+    ssize_t maxID = 0;
+    FileEntry entry;
+    while (fread(&entry, sizeof(FileEntry), 1, dbFile) == 1)
+    {
+        if (entry.fileID > maxID) {
+            maxID = entry.fileID;
+        }
+    }
+
+    fclose(dbFile);
+    return maxID + 1;  // Next unused
+}
+
+// --------------------------------------------------------
+//  3) load_single_metadata()
+//     Reads one .meta file into FileMetadata struct
+// --------------------------------------------------------
 int load_single_metadata(const char *filepath, FileMetadata *out)
 {
     FILE *fp = fopen(filepath, "rb");
@@ -31,8 +120,12 @@ int load_single_metadata(const char *filepath, FileMetadata *out)
     return 0;
 }
 
-/* Function to add a new file mapping to meta.log */
-void add_file_entry(ssize_t fileID, ssize_t totalBytes,const char *existingMetaFilename)
+// --------------------------------------------------------
+//  4) add_file_entry()
+//     Appends an entry to meta.log
+// --------------------------------------------------------
+void add_file_entry(ssize_t fileID, ssize_t totalBytes,
+                    const char *existingMetaFilename)
 {
     FILE *dbFile = fopen(META_LOG_FILE, "ab"); // Append in binary mode
     if (!dbFile)
@@ -43,20 +136,22 @@ void add_file_entry(ssize_t fileID, ssize_t totalBytes,const char *existingMetaF
 
     FileEntry entry;
     entry.fileID = fileID;
-
-    // Here, we assume the file is already named e.g. "0001_gray_cat.png.meta"
-    // so we just store that name in meta.log
-    strncpy(entry.metaFilename, existingMetaFilename, sizeof(entry.metaFilename));
+    strncpy(entry.metaFilename, existingMetaFilename,
+            sizeof(entry.metaFilename));
     entry.metaFilename[sizeof(entry.metaFilename) - 1] = '\0';
     entry.totalBytes = totalBytes;
 
     fwrite(&entry, sizeof(FileEntry), 1, dbFile);
     fclose(dbFile);
 
-    printf("Added fileID: %04zd -> %s to meta.log\n", fileID, entry.metaFilename);
+    printf("Added fileID: %04zd -> %s to meta.log\n",
+           fileID, entry.metaFilename);
 }
 
-/* Function to list all file mappings from meta.log */
+// --------------------------------------------------------
+//  5) list_file_entries()
+//     Reads meta.log and prints all FileEntries
+// --------------------------------------------------------
 void list_file_entries()
 {
     FILE *dbFile = fopen(META_LOG_FILE, "rb");
@@ -68,18 +163,24 @@ void list_file_entries()
 
     FileEntry entry;
     memset(&entry, 0, sizeof(FileEntry));
+
     printf("\nCurrent Database Entries:\n");
     printf("---------------------------\n");
 
     while (fread(&entry, sizeof(FileEntry), 1, dbFile))
     {
-        printf("File ID: %04zd, Total Bytes : %zd Meta File: %s\n", entry.fileID, entry.totalBytes, entry.metaFilename);
+        printf("File ID: %04zd, Total Bytes: %zd, Meta File: %s\n",
+               entry.fileID, entry.totalBytes, entry.metaFilename);
     }
 
     fclose(dbFile);
 }
 
-/* Function to look up a meta file name by fileID */
+// --------------------------------------------------------
+//  6) get_meta_filename()
+//     Looks up meta.log for a matching fileID, returns a malloc'ed 
+//     copy of the metaFilename, or NULL if not found
+// --------------------------------------------------------
 char *get_meta_filename(ssize_t fileID)
 {
     FILE *dbFile = fopen(META_LOG_FILE, "rb");
@@ -95,6 +196,7 @@ char *get_meta_filename(ssize_t fileID)
         if (entry.fileID == fileID)
         {
             fclose(dbFile);
+            // Allocate space for the filename
             char *filename = malloc(strlen(entry.metaFilename) + 1);
             if (filename)
             {
@@ -108,7 +210,11 @@ char *get_meta_filename(ssize_t fileID)
     return NULL; // Not found
 }
 
-/* Load all file entries into a dynamically allocated array */
+// --------------------------------------------------------
+//  7) load_file_entries()
+//     Reads all FileEntry records from meta.log, returns 
+//     a dynamically allocated array of them + the count
+// --------------------------------------------------------
 FileEntry *load_file_entries(size_t *outCount)
 {
     FILE *dbFile = fopen(META_LOG_FILE, "rb");
@@ -118,7 +224,7 @@ FileEntry *load_file_entries(size_t *outCount)
         return NULL;
     }
 
-    // Get total number of entries
+    // Determine how many entries are in the file
     fseek(dbFile, 0, SEEK_END);
     size_t file_size = ftell(dbFile);
     size_t num_entries = file_size / sizeof(FileEntry);
@@ -127,10 +233,11 @@ FileEntry *load_file_entries(size_t *outCount)
     if (num_entries == 0)
     {
         fclose(dbFile);
+        *outCount = 0;
         return NULL; // No entries found
     }
 
-    // Allocate memory for the list
+    // Allocate memory for the array
     FileEntry *entries = malloc(num_entries * sizeof(FileEntry));
     if (!entries)
     {
@@ -139,19 +246,25 @@ FileEntry *load_file_entries(size_t *outCount)
         return NULL;
     }
 
-    // Read all entries into memory
-    fread(entries, sizeof(FileEntry), num_entries, dbFile);
-    fclose(dbFile);
+    // Read them all into the array
+    if (fread(entries, sizeof(FileEntry), num_entries, dbFile) != num_entries)
+    {
+        perror("Error reading file entries from meta.log");
+        free(entries);
+        fclose(dbFile);
+        return NULL;
+    }
 
-    *outCount = num_entries; // Store the number of entries
+    fclose(dbFile);
+    *outCount = num_entries;
     return entries;
 }
 
-/*
-   Function to scan the `records/` folder for .meta files,
-   read the "fileID" from each metadata struct,
-   and add an entry to meta.log
-*/
+// --------------------------------------------------------
+//  8) scan_and_add_files()
+//     Scans the `records/` folder for .meta files, loads
+//     their metadata, and appends an entry to meta.log if needed
+// --------------------------------------------------------
 void scan_and_add_files()
 {
     DIR *dir = opendir(RECORDS_FOLDER);
@@ -164,11 +277,11 @@ void scan_and_add_files()
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL)
     {
-        // Skip `.` and `..`
+        // Skip '.' and '..'
         if (entry->d_name[0] == '.')
             continue;
 
-        // Check if the file has a .meta extension
+        // Check if file has a .meta extension
         if (strstr(entry->d_name, ".meta") != NULL)
         {
             char path[512];
@@ -178,12 +291,11 @@ void scan_and_add_files()
             FileMetadata metadata;
             if (load_single_metadata(path, &metadata) == 0)
             {
-                // 2) We have metadata.fileID, metadata.filename
-                //    The file is already named e.g. "0001_gray_cat.png.meta"
-                //    if you used the other code that created it that way.
+                // 2) Add an entry to meta.log (if not already present)
+                //    Or maybe you check if fileID is already in the log, etc.
+                printf("Found fileID %zd, totalByte %zd, name: %s\n",
+                       metadata.fileID, metadata.totalByte, entry->d_name);
 
-                // 3) Add an entry to meta.log
-                printf("%zd %zd %s", metadata.fileID, metadata.totalByte, entry->d_name);
                 add_file_entry(metadata.fileID, metadata.totalByte, entry->d_name);
             }
         }
@@ -191,72 +303,3 @@ void scan_and_add_files()
 
     closedir(dir);
 }
-
-// int main(){
-//     list_file_entries();
-// }
-
-    // /* Main function: demonstration */
-    // int main()
-    // {
-    //     // 1) Remove previous meta.log (for testing)
-    //     remove(META_LOG_FILE);
-
-    //     // 2) We assume you already put e.g. "0001_gray_cat.png.meta" inside `./records/`
-    //     //    or you used the "metadata.c" -> test_meta() to create it.
-
-    //     // 3) Now we scan the records folder
-    //     scan_and_add_files();
-
-    //     // 4) List all entries
-    //     list_file_entries();
-
-    //     // 5) Test lookup
-    //     ssize_t testFileID = 1; // Suppose we have fileID=1
-    //     char *filename = get_meta_filename(testFileID);
-    //     if (filename)
-    //     {
-    //         printf("\nLookup: File ID %04zd -> Meta File: %s\n", testFileID, filename);
-    //         free(filename);
-    //     }
-    //     else
-    //     {
-    //         printf("\nLookup: File ID %04zd not found\n", testFileID);
-    //     }
-
-    //     // 6) Load all file entries into an array
-    //     size_t fileCount = 0;
-    //     FileEntry *entries = load_file_entries(&fileCount);
-    //     if (entries)
-    //     {
-    //         printf("\nLoading metadata for each file entry...\n");
-
-    //         for (size_t i = 0; i < fileCount; i++) // Use fileCount instead of g_fileCount
-    //         {
-    //             char fullPath[512];
-    //             snprintf(fullPath, sizeof(fullPath), "./records/%s", entries[i].metaFilename);
-
-    //             FileMetadata metadata;
-    //             if (load_single_metadata(fullPath, &metadata) == 0)
-    //             {
-    //                 printf("File ID: %04zd\n", metadata.fileID);
-    //                 printf("Filename: %s\n", metadata.filename);
-    //                 printf("Total Size: %zd bytes\n", metadata.totalByte);
-    //                 printf("Total Chunks: %zd\n", metadata.totalChunk);
-    //                 printf("-----------------------------\n");
-    //             }
-    //             else
-    //             {
-    //                 printf("Failed to read metadata for: %s\n", entries[i].metaFilename);
-    //             }
-    //         }
-
-    //         free(entries);
-    //     }
-    //     else
-    //     {
-    //         printf("\nNo entries found in meta.log\n");
-    //     }
-
-    //     return 0;
-    // }

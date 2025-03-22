@@ -18,6 +18,8 @@ typedef struct
     ssize_t totalBytes;
     char metaFilename[256]; // Store the filename relative to records/
 } FileEntry;
+ssize_t add_new_file(const FileMetadata *meta);
+
 /* Function to add a new file mapping to meta.log */
 void add_file_entry(ssize_t fileID, ssize_t totalBytes, const char *metaFilename);
 
