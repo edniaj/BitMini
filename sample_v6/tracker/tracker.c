@@ -25,14 +25,16 @@ typedef enum
 {
     MSG_REQUEST_ALL_AVAILABLE_SEED = 0,
     MSG_REQUEST_META_DATA,
-    MSG_REQUEST_SEEDER,
+    MSG_REQUEST_SEEDER_BY_FILEID,
     MSG_REQUEST_CREATE_SEEDER,
     MSG_REQUEST_DELETE_SEEDER,
-    MSG_REQUEST_SEEDING_SEED,
     MSG_REQUEST_CREATE_NEW_SEED,
-    MSG_REQUEST_PARTICIPATE_SEED,
+    MSG_REQUEST_PARTICIPATE_SEED_BY_FILEID,
     MSG_REQUEST_UNPARTICIPATE_SEED,
-    MSG_ACK_CREATE_NEW_SEED, // ← Add this line
+    MSG_ACK_CREATE_NEW_SEED, //  - DONE
+    MSG_ACK_PARTICIPATE_SEED_BY_FILEID,
+    MSG_ACK_SEEDER_BY_FILEID,
+    MSG_RESPOND_ERROR
 } TrackerMessageType;
 
 /* --------------------------------------------------------------------------
@@ -67,13 +69,20 @@ typedef struct TrackerMessageHeader
     ssize_t bodySize; // size of body
 } TrackerMessageHeader;
 
+typedef struct PeerWithFileID
+{
+    PeerInfo singleSeeder;
+    ssize_t fileID;
+} PeerWithFileID;
+
 typedef union
 {
     PeerInfo singleSeeder;     // For REGISTER / UNREGISTER
     PeerInfo seederList[64];   // For returning a list of seeders
     FileMetadata fileMetadata; // For CREATE_NEW_SEED
     ssize_t fileID;            // For simple queries
-    char raw[512];             // fallback
+    PeerWithFileID peerWithFileID;
+    char raw[512]; // fallback
 } TrackerMessageBody;
 
 typedef struct
@@ -267,10 +276,94 @@ void handle_create_seeder(int client_socket, const PeerInfo *p)
     write(client_socket, resp, strlen(resp));
 }
 
+static void request_participate_seed_by_fileID(int tracker_socket,
+                                               const char *myIP,
+                                               const char *myPort,
+                                               ssize_t fileID)
+{
+    // 1) Build the message
+    TrackerMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.header.type = MSG_REQUEST_PARTICIPATE_SEED_BY_FILEID;
+    msg.header.bodySize = sizeof(PeerWithFileID);
+
+    // Fill out PeerWithFileID
+    strncpy(msg.body.peerWithFileID.singleSeeder.ip_address, myIP,
+            sizeof(msg.body.peerWithFileID.singleSeeder.ip_address) - 1);
+    strncpy(msg.body.peerWithFileID.singleSeeder.port, myPort,
+            sizeof(msg.body.peerWithFileID.singleSeeder.port) - 1);
+    msg.body.peerWithFileID.fileID = fileID;
+
+    // 2) Send header + body
+    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
+    {
+        perror("ERROR writing header (PARTICIPATE_SEED_BY_FILEID)");
+        return;
+    }
+    if (write(tracker_socket, &msg.body.peerWithFileID, msg.header.bodySize) < 0)
+    {
+        perror("ERROR writing PeerWithFileID body");
+        return;
+    }
+
+    // 3) Read the tracker’s ACK
+    TrackerMessageHeader ack_header;
+    if (read(tracker_socket, &ack_header, sizeof(ack_header)) <= 0)
+    {
+        perror("ERROR reading ack header (PARTICIPATE_SEED_BY_FILEID)");
+        return;
+    }
+
+    // 4) If the tracker uses MSG_ACK_PARTICIPATE_SEED_BY_FILEID on success:
+    if (ack_header.type == MSG_ACK_PARTICIPATE_SEED_BY_FILEID)
+    {
+        printf("Successfully registered as a seeder for fileID %zd.\n", fileID);
+        // If ack_header.bodySize > 0, you might read a text message, etc.
+        if (ack_header.bodySize > 0)
+        {
+            char buffer[256];
+            ssize_t n = read(tracker_socket, buffer, ack_header.bodySize < 256 ? ack_header.bodySize : 255);
+            if (n > 0)
+            {
+                buffer[n] = '\0';
+                printf("Tracker says: %s\n", buffer);
+            }
+        }
+    }
+    else
+    {
+        // Possibly the tracker returned a text-based error
+        fprintf(stderr, "Tracker did not ACK participation. Type=%d\n", ack_header.type);
+
+        // read the error text if ack_header.bodySize > 0
+        if (ack_header.bodySize > 0)
+        {
+            char buffer[256];
+            ssize_t n = read(tracker_socket, buffer, ack_header.bodySize < 256 ? ack_header.bodySize : 255);
+            if (n > 0)
+            {
+                buffer[n] = '\0';
+                fprintf(stderr, "Tracker error: %s\n", buffer);
+            }
+        }
+    }
+}
+
+/*
+ * handle_request_seeder_by_fileID()
+ * Gathers all seeders associated with fileID,
+ * then sends them back to the client.
+ */
+
 /* --------------------------------------------------------------------------
    (G) handle_request_all_available_files()
    Example from your snippet
    -------------------------------------------------------------------------- */
+/*
+ * handle_request_participate_by_fileID()
+ * This is the "I'm seeding file <fileID> now" request.
+ */
+
 void handle_request_all_available_files(int client_socket)
 {
     size_t fileCount = 0;
@@ -330,6 +423,119 @@ void handle_create_new_seed(int client_socket, const FileMetadata *meta)
    Reads the header + body from the socket,
    and dispatches to the correct handler.
    -------------------------------------------------------------------------- */
+/*
+ * handle_request_participate_by_fileID()
+ * This is the "I'm seeding file <fileID> now" request.
+ */
+void handle_request_participate_by_fileID(int client_socket, const PeerWithFileID *peerWithFileID)
+{
+    // 1) Ensure the peer is in the master array
+    PeerInfo *existingPeer = find_peer(&peerWithFileID->singleSeeder);
+    if (!existingPeer)
+    {
+        // Peer must call "create_seeder" first
+        printf("Peer not in master list, requester must register seeder first.\n%s\n %s\n %zd", peerWithFileID->singleSeeder.ip_address, peerWithFileID->singleSeeder.port, peerWithFileID->fileID);
+
+        TrackerMessageHeader ackHeader;
+        TrackerMessageBody ackBody;
+
+        ackHeader.bodySize = sizeof(ackBody.raw);
+        ackHeader.type = MSG_RESPOND_ERROR;
+        strcpy(ackBody.raw, "You must register as a seeder first.\n");
+        write(client_socket, &ackHeader, sizeof(TrackerMessageHeader));
+        write(client_socket, &ackBody, sizeof(ackBody));
+        return;
+    }
+
+    // 2) Add the peer to file_to_seeders
+    ssize_t fileID = peerWithFileID->fileID;
+    int addResult = add_seeder_to_file(fileID, existingPeer);
+    if (addResult == 0)
+    {
+        // 0 means success
+        printf("Peer %s:%s added as seeder for fileID=%zd\n",
+               existingPeer->ip_address, existingPeer->port, fileID);
+
+        // Optionally send a short ACK message or
+        // a formal TrackerMessage with MSG_ACK_PARTICIPATE_SEED_BY_FILEID
+        TrackerMessageHeader ack;
+        memset(&ack, 0, sizeof(ack));
+        ack.type = MSG_ACK_PARTICIPATE_SEED_BY_FILEID;
+        ack.bodySize = 0; // no body or you can send a short text
+
+        write(client_socket, &ack, sizeof(ack));
+    }
+    else if (addResult == 1)
+    {
+        // 1 means "already present"
+        printf("Peer %s:%s is already seeding fileID=%zd\n",
+               existingPeer->ip_address, existingPeer->port, fileID);
+
+        const char *already_msg = "Already participating in this file.\n";
+        write(client_socket, already_msg, strlen(already_msg));
+    }
+    else
+    {
+        // -1 means no space
+        fprintf(stderr, "No space to add seeder in fileID=%zd\n", fileID);
+        const char *fail_msg = "No space in this file's seeder list.\n";
+        write(client_socket, fail_msg, strlen(fail_msg));
+    }
+}
+/*
+ * handle_request_seeder_by_fileID()
+ * Gathers all seeders associated with fileID,
+ * then sends them back to the client.
+ */
+void handle_request_seeder_by_fileID(int client_socket, ssize_t fileID)
+{
+    // 1) Gather seeders in a local array
+    PeerInfo seederList[MAX_SEEDERS_PER_FILE];
+    memset(seederList, 0, sizeof(seederList));
+
+    size_t count = 0;
+    for (int i = 0; i < MAX_SEEDERS_PER_FILE; i++)
+    {
+        PeerInfo *p = file_to_seeders[fileID][i];
+        if (p != NULL)
+        {
+            // Copy the actual PeerInfo struct
+            seederList[count] = *p;
+            count++;
+            if (count >= MAX_SEEDERS_PER_FILE)
+                break;
+        }
+    }
+
+    // 2) Create a response message
+    TrackerMessageHeader ackHeader;
+    memset(&ackHeader, 0, sizeof(ackHeader));
+    ackHeader.type = MSG_ACK_SEEDER_BY_FILEID;
+    // The body will be `count` PeerInfo structs
+    ackHeader.bodySize = count * sizeof(PeerInfo);
+
+    // 3) Send the header
+    ssize_t written = write(client_socket, &ackHeader, sizeof(ackHeader));
+    if (written < 0)
+    {
+        perror("ERROR writing MSG_ACK_SEEDER_BY_FILEID header");
+        return;
+    }
+
+    // 4) Send the body (the array of PeerInfo)
+    if (count > 0)
+    {
+        written = write(client_socket, seederList, ackHeader.bodySize);
+        if (written < 0)
+        {
+            perror("ERROR writing MSG_ACK_SEEDER_BY_FILEID body");
+            return;
+        }
+    }
+
+    printf("Sent %zd seeders for fileID=%zd\n", count, fileID);
+}
+
 void handle_client(int client_socket)
 {
     TrackerMessageHeader header;
@@ -414,6 +620,18 @@ void handle_client(int client_socket)
                 char err[] = "Invalid body size for CREATE_NEW_SEED.\n";
                 write(client_socket, err, strlen(err));
             }
+            break;
+        }
+
+        case MSG_REQUEST_PARTICIPATE_SEED_BY_FILEID:
+        {
+            handle_request_participate_by_fileID(client_socket, &body.peerWithFileID);
+            break;
+        }
+
+        case MSG_REQUEST_SEEDER_BY_FILEID:
+        {
+            handle_request_seeder_by_fileID(client_socket, body.fileID);
             break;
         }
 
