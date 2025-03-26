@@ -14,9 +14,8 @@ typedef struct FileMetaData
 } FileMetadata;
 
 // Function declarations
-// meta.h
-void create_metadata(const char *binary_filepath, FileMetadata *fileMetaData);
-int write_metadata(const char *meta_filepath, const FileMetadata *fileMetaData);
+void create_metadata(char *binary_filepath, FileMetadata *fileMetaData);
+void write_metadata(const char *meta_filepath, const FileMetadata *fileMetaData);
 void read_metadata(const char *meta_filename);
-char *generate_metafile_filepath_with_id(ssize_t fileID, const char *binary_filepath);
+
 #endif // META_H

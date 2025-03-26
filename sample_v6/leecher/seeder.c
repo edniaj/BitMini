@@ -1,4 +1,5 @@
 /************************************************************
+ leecher.c
  * Forked from seeder.c
  ************************************************************/
 #include <stdio.h>
@@ -15,14 +16,11 @@
 #define STORAGE_DIR "./storage_downloads/"
 #define CHUNK_DATA_SIZE 1024
 
-/* ------------------------------------------------------------------------
-   Type Definitions (kept in same order)
------------------------------------------------------------------------- */
 typedef enum PeerMessageType
 {
-    MSG_PEER_REQUEST_BITFIELD = 0,
+    MSG_REQUEST_BITFIELD = 0,
     MSG_SEND_BITFIELD,
-    MSG_PEER_REQUEST_CHUNK,
+    MSG_REQUEST_CHUNK,
     MSG_SEND_CHUNK
 } PeerMessageType;
 
@@ -34,7 +32,6 @@ typedef struct
 
 typedef struct
 {
-    ssize_t fileID;
     ssize_t chunkIndex;
 } ChunkRequest;
 
@@ -133,115 +130,7 @@ typedef struct
     TrackerMessageHeader header;
     TrackerMessageBody body;
 } TrackerMessage;
-
-/* ------------------------------------------------------------------------
-   Function forward declarations - reorganized by category
------------------------------------------------------------------------- */
-// Helper/Utility Functions
 void request_metadata_by_filename(int tracker_socket, const char *metaFilename, FileMetadata *fileMetaData);
-
-// Tracker Communication Functions 
-static int connect_to_tracker(const char *tracker_ip, int tracker_port);
-static void get_all_available_files(int tracker_socket);
-char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID);
-static void request_create_new_seed(int tracker_socket, const char *binary_file_path);
-static PeerInfo* request_seeder_by_fileID(int tracker_socket, ssize_t fileID, size_t *num_seeders_out);
-static void request_participate_seed_by_fileID(int tracker_socket, const char *myIP, const char *myPort, ssize_t fileID);
-static void request_create_seeder(int tracker_socket, const char *myIP, const char *myPort);
-
-// Seeder Implementation Functions
-int setup_seeder_socket(int port);
-
-// CLI and Control Flow Functions
-static void tracker_cli_loop(int tracker_socket, char *ip_address, char *port);
-
-/* ------------------------------------------------------------------------
-   Helper/Utility Functions
------------------------------------------------------------------------- */
-void request_metadata_by_filename(int tracker_socket, const char *metaFilename, FileMetadata *fileMetaData)
-{
-    TrackerMessage msg;
-    memset(&msg, 0, sizeof(msg));
-    msg.header.type = MSG_REQUEST_META_DATA;
-    msg.header.bodySize = sizeof(RequestMetadataBody);
-
-    strncpy(msg.body.requestMetaData.metaFilename, metaFilename, sizeof(msg.body.requestMetaData.metaFilename) - 1);
-
-    write(tracker_socket, &msg.header, sizeof(msg.header));
-    write(tracker_socket, &msg.body.requestMetaData, msg.header.bodySize);
-
-    // Wait for response
-    TrackerMessageHeader respHeader;
-    ssize_t n = read(tracker_socket, &respHeader, sizeof(respHeader));
-    if (n <= 0)
-    {
-        perror("Error reading metadata response header");
-        return;
-    }
-
-    if (respHeader.type != MSG_REQUEST_META_DATA || respHeader.bodySize != sizeof(FileMetadata))
-    {
-        fprintf(stderr, "Unexpected response from tracker.\n");
-        return;
-    }
-
-    n = read(tracker_socket, fileMetaData, sizeof(FileMetadata));
-    if (n != sizeof(FileMetadata))
-    {
-        perror("Error reading metadata body");
-        return;
-    }
-
-    printf("\n📦 Metadata received:\n");
-    printf(" • Filename    : %s\n", fileMetaData->filename);
-    printf(" • Total Bytes : %zd\n", fileMetaData->totalByte);
-    printf(" • Total Chunks: %zd\n", fileMetaData->totalChunk);
-    printf(" • File ID     : %zd\n", fileMetaData->fileID);
-    printf(" • Hash        : ");
-    for (int i = 0; i < 32; i++)
-        printf("%02x", fileMetaData->fileHash[i]);
-    printf("\n");
-}
-
-/* ------------------------------------------------------------------------
-   Tracker Communication Functions
------------------------------------------------------------------------- */
-static int connect_to_tracker(const char *tracker_ip, int tracker_port)
-{
-    printf("Connecting to Tracker at %s:%d...\n", tracker_ip, tracker_port);
-
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0)
-    {
-        perror("ERROR opening socket to tracker");
-        return -1;
-    }
-
-    struct sockaddr_in serv_addr;
-    memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(tracker_port);
-
-    // Convert IP string to binary form
-    if (inet_pton(AF_INET, tracker_ip, &serv_addr.sin_addr) <= 0)
-    {
-        perror("ERROR invalid tracker IP");
-        close(sockfd);
-        return -1;
-    }
-
-    // Connect to the tracker
-    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-    {
-        perror("ERROR connecting to tracker");
-        printf("❌ Connection to Tracker failed. Is it running at %s:%d?\n", tracker_ip, tracker_port);
-        close(sockfd);
-        return -1;
-    }
-
-    printf("✅ Seeder successfully connected to Tracker at %s:%d\n", tracker_ip, tracker_port);
-    return sockfd;
-}
 
 /******************************************************************************
  * 2) get_all_available_files()
@@ -502,7 +391,7 @@ static void request_create_new_seed(int tracker_socket, const char *binary_file_
     free(metaPath);
 }
 
-static PeerInfo* request_seeder_by_fileID(int tracker_socket, ssize_t fileID, size_t *num_seeders_out)
+static void request_seeder_by_fileID(int tracker_socket, ssize_t fileID)
 {
     // 1) Build the request
     TrackerMessage msg;
@@ -515,12 +404,12 @@ static PeerInfo* request_seeder_by_fileID(int tracker_socket, ssize_t fileID, si
     if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
     {
         perror("ERROR writing header (REQUEST_SEEDER_BY_FILEID)");
-        return NULL;
+        return;
     }
     if (write(tracker_socket, &msg.body.fileID, msg.header.bodySize) < 0)
     {
         perror("ERROR writing fileID body");
-        return NULL;
+        return;
     }
 
     // 3) Read the tracker's response header
@@ -528,7 +417,7 @@ static PeerInfo* request_seeder_by_fileID(int tracker_socket, ssize_t fileID, si
     if (read(tracker_socket, &ack_header, sizeof(ack_header)) <= 0)
     {
         perror("ERROR reading ack header (REQUEST_SEEDER_BY_FILEID)");
-        return NULL;
+        return;
     }
 
     // 4) Check if it is MSG_ACK_SEEDER_BY_FILEID
@@ -537,7 +426,7 @@ static PeerInfo* request_seeder_by_fileID(int tracker_socket, ssize_t fileID, si
         // The tracker might have sent an error message or something else
         fprintf(stderr, "Expected MSG_ACK_SEEDER_BY_FILEID, got %d\n", ack_header.type);
         // You might want to read any text error message at this point
-        return NULL;
+        return;
     }
 
     // 5) ack_header.bodySize might be 0 if no seeders or `n * sizeof(PeerInfo)`
@@ -545,7 +434,7 @@ static PeerInfo* request_seeder_by_fileID(int tracker_socket, ssize_t fileID, si
     {
         // Means no seeders found
         printf("No seeders for fileID=%zd.\n", fileID);
-        return NULL;
+        return;
     }
 
     // 6) Read that many bytes into a PeerInfo array
@@ -554,14 +443,14 @@ static PeerInfo* request_seeder_by_fileID(int tracker_socket, ssize_t fileID, si
     if (!seederList)
     {
         perror("calloc failed");
-        return NULL;
+        return;
     }
 
     if (read(tracker_socket, seederList, ack_header.bodySize) < 0)
     {
         perror("ERROR reading seeder list");
         free(seederList);
-        return NULL;
+        return;
     }
 
     // 7) Print them out (or store them, etc.)
@@ -571,12 +460,7 @@ static PeerInfo* request_seeder_by_fileID(int tracker_socket, ssize_t fileID, si
         printf("  -> %s:%s\n", seederList[i].ip_address, seederList[i].port);
     }
 
-    // Return the number of seeders through the pointer
-    if (num_seeders_out) {
-        *num_seeders_out = num_seeders;
-    }
-
-    return seederList;
+    free(seederList);
 }
 
 static void request_participate_seed_by_fileID(int tracker_socket,
@@ -651,6 +535,50 @@ static void request_participate_seed_by_fileID(int tracker_socket,
         }
     }
 }
+void request_metadata_by_filename(int tracker_socket, const char *metaFilename, FileMetadata *fileMetaData)
+{
+    TrackerMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.header.type = MSG_REQUEST_META_DATA;
+    msg.header.bodySize = sizeof(RequestMetadataBody);
+
+    strncpy(msg.body.requestMetaData.metaFilename, metaFilename, sizeof(msg.body.requestMetaData.metaFilename) - 1);
+
+    write(tracker_socket, &msg.header, sizeof(msg.header));
+    write(tracker_socket, &msg.body.requestMetaData, msg.header.bodySize);
+
+    // Wait for response
+    TrackerMessageHeader respHeader;
+    ssize_t n = read(tracker_socket, &respHeader, sizeof(respHeader));
+    if (n <= 0)
+    {
+        perror("Error reading metadata response header");
+        return;
+    }
+
+    if (respHeader.type != MSG_REQUEST_META_DATA || respHeader.bodySize != sizeof(FileMetadata))
+    {
+        fprintf(stderr, "Unexpected response from tracker.\n");
+        return;
+    }
+
+    n = read(tracker_socket, fileMetaData, sizeof(FileMetadata));
+    if (n != sizeof(FileMetadata))
+    {
+        perror("Error reading metadata body");
+        return;
+    }
+
+    printf("\n📦 Metadata received:\n");
+    printf(" • Filename    : %s\n", fileMetaData->filename);
+    printf(" • Total Bytes : %zd\n", fileMetaData->totalByte);
+    printf(" • Total Chunks: %zd\n", fileMetaData->totalChunk);
+    printf(" • File ID     : %zd\n", fileMetaData->fileID);
+    printf(" • Hash        : ");
+    for (int i = 0; i < 32; i++)
+        printf("%02x", fileMetaData->fileHash[i]);
+    printf("\n");
+}
 
 static void request_create_seeder(int tracker_socket, const char *myIP, const char *myPort)
 {
@@ -689,46 +617,49 @@ static void request_create_seeder(int tracker_socket, const char *myIP, const ch
         perror("ERROR reading tracker response (CREATE_SEEDER)");
 }
 
+/* TRACKER Main functions*/
+
 /* ------------------------------------------------------------------------
-   Seeder Implementation Functions
------------------------------------------------------------------------- */
-int setup_seeder_socket(int port)
+   (B) FUNCTION: connect_to_tracker()
+   Creates a TCP socket and attempts to connect to the given IP/port.
+ ------------------------------------------------------------------------ */
+static int connect_to_tracker(const char *tracker_ip, int tracker_port)
 {
-    int listen_socketfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_socketfd < 0)
+    printf("Connecting to Tracker at %s:%d...\n", tracker_ip, tracker_port);
+
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0)
     {
-        perror("ERROR opening seeder socket");
+        perror("ERROR opening socket to tracker");
         return -1;
     }
-    int optval = 1;
-    setsockopt(listen_socketfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(port);
+    serv_addr.sin_port = htons(tracker_port);
 
-    if (bind(listen_socketfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    // Convert IP string to binary form
+    if (inet_pton(AF_INET, tracker_ip, &serv_addr.sin_addr) <= 0)
     {
-        perror("ERROR on binding seeder socket");
-        close(listen_socketfd);
+        perror("ERROR invalid tracker IP");
+        close(sockfd);
         return -1;
     }
 
-    if (listen(listen_socketfd, 10) < 0)
+    // Connect to the tracker
+    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
     {
-        perror("ERROR on listen");
-        close(listen_socketfd);
+        perror("ERROR connecting to tracker");
+        printf("❌ Connection to Tracker failed. Is it running at %s:%d?\n", tracker_ip, tracker_port);
+        close(sockfd);
         return -1;
     }
-    printf("Seeder listening on port %d for peer connections...\n", port);
-    return listen_socketfd;
+
+    printf("✅ Seeder successfully connected to Tracker at %s:%d\n", tracker_ip, tracker_port);
+    return sockfd;
 }
 
-/* ------------------------------------------------------------------------
-   CLI and Control Flow Functions
------------------------------------------------------------------------- */
 static void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
 {
     char *input = malloc(250);
@@ -791,69 +722,26 @@ static void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             /* Leech file by fileID
                 1. Get the metadata and store it in ./storage_downloads
                 2. Create the bitfield in ./storage_downloads
-                3. Get Seeder List
-                4. Start leeching the file from the first person. (KISS)
+                3. Start leeching the file from the first person. (KISS)
             */
 
-            // 1 Get metadata and store it
+            // 1
             ssize_t *selectedFileID = malloc(sizeof(ssize_t));
             char *metaFilePath = get_metadata_via_cli(tracker_socket, selectedFileID);
-            if (!metaFilePath) {
-                free(selectedFileID);
-                break;
-            }
+            
             printf("\nmetaFilePath:%s\n", metaFilePath);
-
-            // Process the filepath 
-            char *filePath = malloc(strlen(metaFilePath) + 1);
-            char *lastSlash = strrchr(metaFilePath, '/');
-            char *directory = NULL;
-            char *baseName = NULL;
-
-            if (!lastSlash)
-            {
-                directory = ".";
-                baseName = metaFilePath;
-            }
-            else
-            {
-                // Temporarily null terminate to copy directory
-                *lastSlash = '\0';
-                directory = strdup(metaFilePath);
-                *lastSlash = '/'; // Restore slash
-                baseName = lastSlash + 1;
-            }
-
-            // Skip the first 5 characters (e.g., "0034_")
-            char *fileNameWithoutPrefix = baseName + 5;
-
-            // Copy to filePath excluding .meta extension and prefix
-            size_t fileNameLen = strlen(fileNameWithoutPrefix) - 5; // -5 for ".meta"
-
-            // Allocate space for directory + '/' + filename + null terminator
-            free(filePath); // Free previous allocation
-            filePath = malloc(strlen(directory) + 1 + fileNameLen + 1);
-
-            sprintf(filePath, "%s/%.*s", directory, (int)fileNameLen, fileNameWithoutPrefix);
-            printf("filePath:%s\n", filePath);
-
-            if (directory != NULL && directory != ".")
-            {
-                free(directory);
-            }
-
-            // 2 Create bitfield file
-            char *bitfieldPath = NULL;
+            // 2 Create bitfield with the same name but different extension
             if (metaFilePath)
             {
                 size_t metaPathLen = strlen(metaFilePath);
-                bitfieldPath = malloc(metaPathLen + 4 + 1); // +4 is for .bitfield ext and +1 for null terminator
+                char *bitfieldPath = malloc(metaPathLen + 4 + 1); // +4 is for .bitfield ext and +1 for null terminator
 
                 if (bitfieldPath)
                 {
                     strcpy(bitfieldPath, metaFilePath);
 
                     // Find the .meta extension and replace it with .bitfield
+                    /* Point to the .meta word*/
                     char *extension = strstr(bitfieldPath, ".meta");
                     if (extension)
                     {
@@ -870,42 +758,11 @@ static void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
                 }
             }
 
-            // 3 Get Seeder List
-            size_t num_seeders = 0;
-            PeerInfo *seederList = request_seeder_by_fileID(tracker_socket, *selectedFileID, &num_seeders);
+            //3 Get Seeder List
             
-            // 4 Connect to the first seeder if available
-            if (seederList && num_seeders > 0)
-            {
-                // Make a copy of the first seeder info before freeing the list
-                PeerInfo firstSeeder = seederList[0];
-                
-                printf("\nAvailable seeders (%zu total):\n", num_seeders);
-                for (size_t i = 0; i < num_seeders; i++)
-                {
-                    printf("%zu) %s:%s\n", i+1, seederList[i].ip_address, seederList[i].port);
-                }
-                
-                printf("\nWill connect to first seeder: %s:%s\n", firstSeeder.ip_address, firstSeeder.port);
-                
-                // 4.1 Connect to the first seeder and start leeching
-                // (Code for connecting to seeder would go here)
-                
-                // Free seederList after using it
-                free(seederList);
-            }
-            else
-            {
-                printf("No seeders available for this file.\n");
-            }
-
-            // Clean up
-            if (bitfieldPath) free(bitfieldPath);
+            free(bitfieldPath);
             free(metaFilePath);
-            free(filePath);
-            free(selectedFileID);
             break;
-
         case 5:
             printf("\nEnter fileID:\n");
             if (!fgets(input, 250, stdin))
@@ -917,7 +774,6 @@ static void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             ssize_t intput_fileID = (ssize_t)atoi(input);
             request_participate_seed_by_fileID(tracker_socket, ip_address, port, intput_fileID);
             break;
-
         default:
             printf("Unknown option.\n");
             break;
@@ -925,91 +781,340 @@ static void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
     }
 }
 
-void handle_peer_request(int client_socketfd)
+/* ------------------------------------------------------------------------
+   (E) CLI: Let user pick an action:
+       1) Register as a seeder
+       2) Get all seeds
+       0) Exit
+ ------------------------------------------------------------------------ */
+
+/* Seeder functions*/
+
+int setup_seeder_socket(int port)
 {
-
-
-    while (1)
+    int listen_socketfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_socketfd < 0)
     {
-        PeerMessageHeader header;
-        ssize_t nbytes = read(client_socketfd, &header, sizeof(header));
-        if (nbytes <= 0)
-        {
-            if (nbytes < 0)
-                perror("ERROR reading from peer socket");
-            else
-                printf("Peer disconnected.\n");
-            break;
-        }
-
-        switch (header.type)
-        {
-        case MSG_PEER_REQUEST_BITFIELD:
-        {
-            break;
-            printf("Peer requests BITFIELD.\n");
-            PeerMessageHeader resp_header = {MSG_SEND_BITFIELD, FileMetaData->fileID};
-            if (write(client_socketfd, &resp_header, sizeof(resp_header)) < 0)
-            {
-                perror("ERROR sending bitfield response header");
-                break;
-            }
-            if (write(client_socketfd, bitfield, bitfield_size) < 0)
-            {
-                perror("ERROR sending bitfield data");
-            }
-            else
-            {
-                printf("Bitfield sent successfully.\n");
-            }
-            break;
-        }
-        case MSG_PEER_REQUEST_CHUNK:
-        {
-            ChunkRequest chunkReq;
-            if (read(client_socketfd, &chunkReq, sizeof(chunkReq)) <= 0)
-            {
-                perror("ERROR reading chunk request");
-                break;
-            }
-            printf("Peer wants chunk index: %zd\n", chunkReq.chunkIndex);
-
-            // read chunk data
-            TransferChunk chunk;
-            memset(&chunk, 0, sizeof(chunk));
-            chunk.fileID = fileMetaData->fileID;
-            chunk.chunkIndex = chunkReq.chunkIndex;
-
-            // Move file pointer and read
-            fseek(data_file_fp, chunkReq.chunkIndex * 1024, SEEK_SET);
-            chunk.totalByte = fread(chunk.chunkData, 1, 1024, data_file_fp);
-
-            // Hash
-            create_chunkHash(&chunk);
-
-            // Send chunk
-            if (write(client_socketfd, &chunk, sizeof(chunk)) < 0)
-            {
-                perror("ERROR sending chunk");
-            }
-            else
-            {
-                printf("Chunk %zd sent successfully.\n", chunkReq.chunkIndex);
-            }
-            break;
-        }
-        default:
-            printf("Unknown peer message type: %d\n", header.type);
-            break;
-        }
+        perror("ERROR opening seeder socket");
+        return -1;
     }
-    close(client_socketfd);
+    int optval = 1;
+    setsockopt(listen_socketfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+
+    struct sockaddr_in serv_addr;
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
+    serv_addr.sin_port = htons(port);
+
+    if (bind(listen_socketfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+        perror("ERROR on binding seeder socket");
+        close(listen_socketfd);
+        return -1;
+    }
+
+    if (listen(listen_socketfd, 10) < 0)
+    {
+        perror("ERROR on listen");
+        close(listen_socketfd);
+        return -1;
+    }
+    printf("Seeder listening on port %d for peer connections...\n", port);
+    return listen_socketfd;
 }
 
+// void handle_peer_request(int client_socketfd)
+// {
+//     while (1)
+//     {
+//         PeerMessageHeader header;
+//         ssize_t nbytes = read(client_socketfd, &header, sizeof(header));
+//         if (nbytes <= 0)
+//         {
+//             if (nbytes < 0)
+//                 perror("ERROR reading from peer socket");
+//             else
+//                 printf("Peer disconnected.\n");
+//             break;
+//         }
+
+//         switch (header.type)
+//         {
+//         case MSG_REQUEST_BITFIELD:
+//         {
+//             break;
+//             // printf("Peer requests BITFIELD.\n");
+//             // PeerMessageHeader resp_header = {MSG_SEND_BITFIELD, FileMetaData->fileID};
+//             // if (write(client_socketfd, &resp_header, sizeof(resp_header)) < 0)
+//             // {
+//             //     perror("ERROR sending bitfield response header");
+//             //     break;
+//             // }
+//             // if (write(client_socketfd, bitfield, bitfield_size) < 0)
+//             // {
+//             //     perror("ERROR sending bitfield data");
+//             // }
+//             // else
+//             // {
+//             //     printf("Bitfield sent successfully.\n");
+//             // }
+//             // break;
+//         }
+//         case MSG_REQUEST_CHUNK:
+//         {
+//             // ChunkRequest chunkReq;
+//             // if (read(client_socketfd, &chunkReq, sizeof(chunkReq)) <= 0)
+//             // {
+//             //     perror("ERROR reading chunk request");
+//             //     break;
+//             // }
+//             // printf("Peer wants chunk index: %zd\n", chunkReq.chunkIndex);
+
+//             // // read chunk data
+//             // TransferChunk chunk;
+//             // memset(&chunk, 0, sizeof(chunk));
+//             // chunk.fileID = fileMetaData->fileID;
+//             // chunk.chunkIndex = chunkReq.chunkIndex;
+
+//             // // Move file pointer and read
+//             // fseek(data_file_fp, chunkReq.chunkIndex * 1024, SEEK_SET);
+//             // chunk.totalByte = fread(chunk.chunkData, 1, 1024, data_file_fp);
+
+//             // // Hash
+//             // create_chunkHash(&chunk);
+
+//             // // Send chunk
+//             // if (write(client_socketfd, &chunk, sizeof(chunk)) < 0)
+//             // {
+//             //     perror("ERROR sending chunk");
+//             // }
+//             // else
+//             // {
+//             //     printf("Chunk %zd sent successfully.\n", chunkReq.chunkIndex);
+//             // }
+//             break;
+//         }
+//         default:
+//             printf("Unknown peer message type: %d\n", header.type);
+//             break;
+//         }
+//     }
+//     close(client_socketfd);
+// }
+
+// /* ------------------------------------------------------------------------
+//    (F) Existing "Seeder" chunk-serving code (MINIMALLY CHANGED):
+//        - initialize_seeder() loads the .meta, .png, etc.
+//        - setup_seeder_socket() listens for peer connections
+//        - handle_peer_request() handles chunk requests
+//  ------------------------------------------------------------------------ */
+
+// /* --------------------------  FUNCTIONS FOR SEEDERS  ----------------------------------------------
+//  */
+// // These are your original message types for peer <-> seeder
+// /* -------------------------------
+//    PeerMessageType
+//    (No change needed if you like your existing enum)
+// ------------------------------- */
+
+// static FileMetadata *fileMetaData = NULL;
+// static FILE *data_file_fp = NULL;
+// static uint8_t *bitfield = NULL;
+// static size_t bitfield_size = 0;
+
+// void create_chunkHash(TransferChunk *chunk)
+// {
+//     SHA256_CTX sha256;
+//     SHA256_Init(&sha256); // Initialize SHA-256 context
+
+//     SHA256_Update(&sha256, chunk->chunkData, chunk->totalByte); // Update hash with chunk
+//     SHA256_Final(chunk->chunkHash, &sha256);
+// }
+
+// /*
+//    Request the bitfield from the server, but note that
+//    we expect `(totalChunk+7)/8` bytes, not `totalChunk` bytes.
+// */
+// uint8_t *request_bitfield(int sockfd, ssize_t fileID, ssize_t totalChunk)
+// {
+//     // We know the bitfield should have (totalChunk+7)/8 bytes
+//     size_t expectedBitfieldSize = (totalChunk + 7) / 8;
+
+//     // 1) Build a message to request bitfield
+//     PeerMessage msg;
+//     memset(&msg, 0, sizeof(msg));
+//     msg.header.type = MSG_REQUEST_BITFIELD;
+//     msg.header.bodySize = 0;
+//     // If you want the server to know which fileID, you could
+//     // store it in the body, but let's keep it simpler for now.
+//     // e.g. you might also have a separate "req" struct with the fileID.
+
+//     // 2) Write the header (and body if bodySize>0)
+//     if (write(sockfd, &msg.header, sizeof(msg.header)) < 0)
+//     {
+//         perror("ERROR writing header (MSG_REQUEST_BITFIELD)");
+//         return NULL;
+//     }
+
+//     // 3) Read the server's response header
+//     PeerMessageHeader respHeader;
+//     ssize_t n = read(sockfd, &respHeader, sizeof(respHeader));
+//     if (n <= 0)
+//     {
+//         perror("ERROR reading bitfield response header");
+//         return NULL;
+//     }
+
+//     if (respHeader.type != MSG_SEND_BITFIELD)
+//     {
+//         fprintf(stderr, "Expected MSG_SEND_BITFIELD, got %d\n", respHeader.type);
+//         return NULL;
+//     }
+
+//     // 4) Now read that many bytes as the bitfield
+//     //    We expect it to match 'expectedBitfieldSize'.
+//     //    The server hopefully sets respHeader.bodySize == expectedBitfieldSize
+//     if ((size_t)respHeader.bodySize != expectedBitfieldSize)
+//     {
+//         fprintf(stderr, "Server bitfield size mismatch. Got %zd, expected %zu\n",
+//                 respHeader.bodySize, expectedBitfieldSize);
+//         return NULL;
+//     }
+
+//     uint8_t *bitfield = malloc(expectedBitfieldSize);
+//     if (!bitfield)
+//     {
+//         perror("ERROR allocating bitfield");
+//         return NULL;
+//     }
+
+//     size_t bytesRead = 0;
+//     while (bytesRead < expectedBitfieldSize)
+//     {
+//         ssize_t r = read(sockfd, bitfield + bytesRead, expectedBitfieldSize - bytesRead);
+//         if (r <= 0)
+//         {
+//             perror("ERROR reading bitfield data");
+//             free(bitfield);
+//             return NULL;
+//         }
+//         bytesRead += r;
+//     }
+
+//     printf("Received bitfield of %zu bytes.\n", expectedBitfieldSize);
+//     return bitfield;
+// }
+
+// /*
+//    Example of how you might request a single chunk from the server:
+//    1) Send a small header with type = MSG_REQUEST_CHUNK, plus the fileID.
+//    2) Send an additional 'ChunkRequest' struct containing the chunkIndex.
+//    3) Read back a 'TransferChunk' from the server into outChunk.
+// */
+// int request_chunk(int sockfd, ssize_t fileID, ssize_t chunkIndex, TransferChunk *outChunk)
+// {
+//     // 1) Build the message
+//     PeerMessage msg;
+//     memset(&msg, 0, sizeof(msg));
+//     msg.header.type = MSG_REQUEST_CHUNK;
+//     msg.header.bodySize = sizeof(ChunkRequest);
+
+//     // Fill body: the chunk index we want
+//     msg.body.chunkRequest.chunkIndex = chunkIndex;
+
+//     // 2) Write header
+//     if (write(sockfd, &msg.header, sizeof(msg.header)) < 0)
+//     {
+//         perror("ERROR writing chunk request header");
+//         return -1;
+//     }
+//     // 3) Write body
+//     if (write(sockfd, &msg.body.chunkRequest, msg.header.bodySize) < 0)
+//     {
+//         perror("ERROR writing chunk request body");
+//         return -1;
+//     }
+
+//     // 4) Read server response header
+//     PeerMessageHeader respHeader;
+//     ssize_t n = read(sockfd, &respHeader, sizeof(respHeader));
+//     if (n <= 0)
+//     {
+//         perror("ERROR reading chunk response header");
+//         return -1;
+//     }
+//     if (respHeader.type != MSG_SEND_CHUNK || respHeader.bodySize != sizeof(TransferChunk))
+//     {
+//         fprintf(stderr, "Invalid response from server. type=%d, bodySize=%zd\n",
+//                 respHeader.type, respHeader.bodySize);
+//         return -1;
+//     }
+
+//     // 5) Read the TransferChunk
+//     size_t totalRead = 0;
+//     size_t chunkStructSize = sizeof(TransferChunk);
+//     char *buf = (char *)outChunk;
+
+//     while (totalRead < chunkStructSize)
+//     {
+//         ssize_t r = read(sockfd, buf + totalRead, chunkStructSize - totalRead);
+//         if (r <= 0)
+//         {
+//             perror("ERROR reading TransferChunk");
+//             return -1;
+//         }
+//         totalRead += r;
+//     }
+
+//     // (Optional) Validate chunk hash
+//     // create_chunkHash(outChunk) and compare outChunk->chunkHash ?
+
+//     printf("Received chunk #%zd, totalByte=%zd\n",
+//            outChunk->chunkIndex, outChunk->totalByte);
+//     return 0;
+// }
+
+// /*
+//    We won't really use send_chunk() from the client side in this scenario,
+//    because the client is only "receiving" chunks from the server.
+//    (Kept here as in your original code.)
+// */
+// int send_chunk(int sockfd, TransferChunk *chunk)
+// {
+//     ssize_t sent_bytes = write(sockfd, chunk, sizeof(TransferChunk));
+//     if (sent_bytes < 0)
+//     {
+//         perror("ERROR writing to socket");
+//         return 1;
+//     }
+//     return 0;
+// }
+
+// /* Helper function to test if bit i in bitfield is set (1) */
+// static int bitfield_has_chunk(const uint8_t *bitfield, ssize_t i)
+// {
+//     ssize_t byteIndex = i / 8;
+//     int bitOffset = i % 8;
+//     /*
+//        If the bit is set, it returns nonzero.
+//        We'll specifically check if that bit is 1.
+//     */
+//     return (bitfield[byteIndex] & (1 << bitOffset)) != 0;
+// }
+
+// /* Helper function to set bit i in our local bitfield. */
+// static void bitfield_mark_chunk(uint8_t *bitfield, ssize_t i)
+// {
+//     ssize_t byteIndex = i / 8;
+//     int bitOffset = i % 8;
+//     bitfield[byteIndex] |= (1 << bitOffset);
+// }
 
 /* ------------------------------------------------------------------------
-   Main Function - Always Last
------------------------------------------------------------------------- */
+   (G) MAIN: Minimal changes to connect to tracker first, then
+             optionally start listening for peer chunk requests.
+ ------------------------------------------------------------------------ */
 int main()
 {
     // 1) Initialize local .meta, .bitfield, etc.
@@ -1061,7 +1166,7 @@ int main()
         }
         printf("New peer connected.\n");
         // Serve chunk requests
-        handle_peer_request(peer_fd);
+        // handle_peer_request(peer_fd);
         // closed in handle_peer_request()
     }
 

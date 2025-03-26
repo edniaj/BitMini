@@ -75,6 +75,11 @@ typedef struct PeerWithFileID
     ssize_t fileID;
 } PeerWithFileID;
 
+typedef struct
+{
+    char metaFilename[256]; // or whatever size you use
+} RequestMetadataBody;
+
 typedef union
 {
     PeerInfo singleSeeder;     // For REGISTER / UNREGISTER
@@ -82,7 +87,8 @@ typedef union
     FileMetadata fileMetadata; // For CREATE_NEW_SEED
     ssize_t fileID;            // For simple queries
     PeerWithFileID peerWithFileID;
-    char raw[512]; // fallback
+    RequestMetadataBody requestMetaData; //
+    char raw[512];                       // fallback
 } TrackerMessageBody;
 
 typedef struct
@@ -276,79 +282,6 @@ void handle_create_seeder(int client_socket, const PeerInfo *p)
     write(client_socket, resp, strlen(resp));
 }
 
-static void request_participate_seed_by_fileID(int tracker_socket,
-                                               const char *myIP,
-                                               const char *myPort,
-                                               ssize_t fileID)
-{
-    // 1) Build the message
-    TrackerMessage msg;
-    memset(&msg, 0, sizeof(msg));
-    msg.header.type = MSG_REQUEST_PARTICIPATE_SEED_BY_FILEID;
-    msg.header.bodySize = sizeof(PeerWithFileID);
-
-    // Fill out PeerWithFileID
-    strncpy(msg.body.peerWithFileID.singleSeeder.ip_address, myIP,
-            sizeof(msg.body.peerWithFileID.singleSeeder.ip_address) - 1);
-    strncpy(msg.body.peerWithFileID.singleSeeder.port, myPort,
-            sizeof(msg.body.peerWithFileID.singleSeeder.port) - 1);
-    msg.body.peerWithFileID.fileID = fileID;
-
-    // 2) Send header + body
-    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
-    {
-        perror("ERROR writing header (PARTICIPATE_SEED_BY_FILEID)");
-        return;
-    }
-    if (write(tracker_socket, &msg.body.peerWithFileID, msg.header.bodySize) < 0)
-    {
-        perror("ERROR writing PeerWithFileID body");
-        return;
-    }
-
-    // 3) Read the tracker’s ACK
-    TrackerMessageHeader ack_header;
-    if (read(tracker_socket, &ack_header, sizeof(ack_header)) <= 0)
-    {
-        perror("ERROR reading ack header (PARTICIPATE_SEED_BY_FILEID)");
-        return;
-    }
-
-    // 4) If the tracker uses MSG_ACK_PARTICIPATE_SEED_BY_FILEID on success:
-    if (ack_header.type == MSG_ACK_PARTICIPATE_SEED_BY_FILEID)
-    {
-        printf("Successfully registered as a seeder for fileID %zd.\n", fileID);
-        // If ack_header.bodySize > 0, you might read a text message, etc.
-        if (ack_header.bodySize > 0)
-        {
-            char buffer[256];
-            ssize_t n = read(tracker_socket, buffer, ack_header.bodySize < 256 ? ack_header.bodySize : 255);
-            if (n > 0)
-            {
-                buffer[n] = '\0';
-                printf("Tracker says: %s\n", buffer);
-            }
-        }
-    }
-    else
-    {
-        // Possibly the tracker returned a text-based error
-        fprintf(stderr, "Tracker did not ACK participation. Type=%d\n", ack_header.type);
-
-        // read the error text if ack_header.bodySize > 0
-        if (ack_header.bodySize > 0)
-        {
-            char buffer[256];
-            ssize_t n = read(tracker_socket, buffer, ack_header.bodySize < 256 ? ack_header.bodySize : 255);
-            if (n > 0)
-            {
-                buffer[n] = '\0';
-                fprintf(stderr, "Tracker error: %s\n", buffer);
-            }
-        }
-    }
-}
-
 /*
  * handle_request_seeder_by_fileID()
  * Gathers all seeders associated with fileID,
@@ -536,6 +469,29 @@ void handle_request_seeder_by_fileID(int client_socket, ssize_t fileID)
     printf("Sent %zd seeders for fileID=%zd\n", count, fileID);
 }
 
+void handle_request_metadata(int client_socket, const RequestMetadataBody *req)
+{
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "./records/%s", req->metaFilename);
+    printf("filepath: %s", filepath);
+    FileMetadata meta;
+    if (load_single_metadata(filepath, &meta) != 0)
+    {
+        TrackerMessageHeader errHeader = {MSG_RESPOND_ERROR, 0};
+        write(client_socket, &errHeader, sizeof(errHeader));
+        return;
+    }
+
+    TrackerMessageHeader respHeader;
+    respHeader.type = MSG_REQUEST_META_DATA;
+    respHeader.bodySize = sizeof(FileMetadata);
+
+    write(client_socket, &respHeader, sizeof(respHeader));
+    write(client_socket, &meta, sizeof(meta));
+
+    printf("✅ Sent metadata for file: %s\n", req->metaFilename);
+}
+
 void handle_client(int client_socket)
 {
     TrackerMessageHeader header;
@@ -632,6 +588,20 @@ void handle_client(int client_socket)
         case MSG_REQUEST_SEEDER_BY_FILEID:
         {
             handle_request_seeder_by_fileID(client_socket, body.fileID);
+            break;
+        }
+        case MSG_REQUEST_META_DATA:
+        {   
+            printf("cat");
+            if (header.bodySize == sizeof(RequestMetadataBody))
+            {
+                handle_request_metadata(client_socket, &body.requestMetaData);
+            }
+            else
+            {
+                char err[] = "Invalid body size for REQUEST_META_DATA.\n";
+                write(client_socket, err, strlen(err));
+            }
             break;
         }
 

@@ -64,8 +64,6 @@ char *generate_bitfield_filepath_with_id(ssize_t fileID, const char *binary_file
     return result; // caller must free!
 }
 
-
-
 /* Function to create a bitfield file with all chunks set to 1 */
 void create_filled_bitfield(const char *metadata_filepath, const char *bitfield_filepath)
 {
@@ -111,56 +109,6 @@ void create_filled_bitfield(const char *metadata_filepath, const char *bitfield_
     fclose(bitfield_fp);
 
     printf("Bitfield file '%s' created with all bits set to 1.\n", bitfield_filepath);
-
-    // Cleanup
-    free(bitfield);
-}
-
-/* Function to create a bitfield file with all chunks set to 0 */
-void create_empty_bitfield(const char *metadata_filepath, const char *bitfield_filepath)
-{
-    // Open the metadata file
-    FILE *meta_fp = fopen(metadata_filepath, "rb");
-    if (!meta_fp)
-    {
-        perror("Error opening metadata file");
-        exit(EXIT_FAILURE);
-    }
-
-    // Read metadata
-    FileMetadata fileMetaData;
-    if (fread(&fileMetaData, sizeof(FileMetadata), 1, meta_fp) != 1)
-    {
-        perror("Error reading metadata file");
-        fclose(meta_fp);
-        exit(EXIT_FAILURE);
-    }
-    fclose(meta_fp);
-
-    // Calculate required bitfield size (1 bit per chunk, rounded up to nearest byte)
-    size_t bitfield_size = (fileMetaData.totalChunk + 7) / 8;
-
-    // Allocate and initialize bitfield (all bits set to 0)
-    uint8_t *bitfield = malloc(bitfield_size);
-    if (!bitfield)
-    {
-        perror("Memory allocation failed for bitfield");
-        exit(EXIT_FAILURE);
-    }
-    memset(bitfield, 0x00, bitfield_size); // Set all bits to 0 (owning no chunks)
-
-    // Write bitfield to file
-    FILE *bitfield_fp = fopen(bitfield_filepath, "wb");
-    if (!bitfield_fp)
-    {
-        perror("Error opening bitfield file for writing");
-        free(bitfield);
-        exit(EXIT_FAILURE);
-    }
-    fwrite(bitfield, 1, bitfield_size, bitfield_fp);
-    fclose(bitfield_fp);
-
-    printf("Bitfield file '%s' created with all bits set to 0.\n", bitfield_filepath);
 
     // Cleanup
     free(bitfield);

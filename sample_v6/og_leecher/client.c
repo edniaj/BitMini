@@ -34,7 +34,6 @@ typedef enum
     MSG_ACK_CREATE_NEW_SEED //  - DONE
 } TrackerMessageType;
 
-
 typedef enum
 {
     MSG_REQUEST_BITFIELD,
@@ -276,9 +275,9 @@ static int bitfield_has_chunk(const uint8_t *bitfield, ssize_t i)
 {
     ssize_t byteIndex = i / 8;
     int bitOffset = i % 8;
-    /* 
+    /*
        If the bit is set, it returns nonzero.
-       We'll specifically check if that bit is 1. 
+       We'll specifically check if that bit is 1.
     */
     return (bitfield[byteIndex] & (1 << bitOffset)) != 0;
 }
@@ -353,9 +352,9 @@ int main()
         goto cleanup;
     }
 
-    /* 
+    /*
        Make our local bitfield (also using (totalChunk+7)/8 bytes).
-       Each bit = "do we have chunk i?" 
+       Each bit = "do we have chunk i?"
        Start with all bits = 0 (we have none).
     */
     size_t bitfield_size = (fileMetaData->totalChunk + 7) / 8;
@@ -396,17 +395,6 @@ int main()
             printf("Retrieved chunk %zd, wrote %zd bytes.\n", i, chunk.totalByte);
         }
     }
-
-    /*
-       Old Code from previous client model:
-       Remove newline character if present.
-       Send file to the server.
-       printf("Enter the file path: ");
-       strcpy(data_file_path, "./gray_cat.png");
-       strcpy(meta_file_path, "./gray_cat.meta");
-       send_file(sockfd, data_file_path, meta_file_path);
-       close(sockfd);
-    */
 
     printf("File download completed.\n");
 
