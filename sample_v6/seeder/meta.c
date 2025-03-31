@@ -148,7 +148,7 @@ int write_metadata(const char *meta_filepath, const FileMetadata *fileMetaData)
     if (fp == NULL)
     {
         perror("ERROR opening metadata file for writing");
-        return -1;  // Let the caller handle the failure
+        return -1; // Let the caller handle the failure
     }
 
     size_t written = fwrite(fileMetaData, sizeof(FileMetadata), 1, fp);
@@ -164,9 +164,9 @@ int write_metadata(const char *meta_filepath, const FileMetadata *fileMetaData)
 }
 
 /* Read the FileMetadata from a .meta file and print it */
-void read_metadata(const char *meta_filename)
+void read_metadata(const char *meta_filename, FileMetadata *fileMetaData)
 {
-    FileMetadata fileMetaData;
+
     FILE *fp = fopen(meta_filename, "rb");
     if (!fp)
     {
@@ -174,7 +174,7 @@ void read_metadata(const char *meta_filename)
         return;
     }
 
-    if (fread(&fileMetaData, sizeof(FileMetadata), 1, fp) != 1)
+    if (fread(fileMetaData, sizeof(FileMetadata), 1, fp) != 1)
     {
         perror("ERROR reading metadata");
         fclose(fp);
@@ -183,14 +183,14 @@ void read_metadata(const char *meta_filename)
     fclose(fp);
 
     printf("\n=== Read Metadata ===\n");
-    printf("File Name: %s\n", fileMetaData.filename);
-    printf("File ID: %zd\n", fileMetaData.fileID);
-    printf("Total Chunks: %zd\n", fileMetaData.totalChunk);
-    printf("Total Bytes: %zd\n", fileMetaData.totalByte);
+    printf("File Name: %s\n", fileMetaData->filename);
+    printf("File ID: %zd\n", fileMetaData->fileID);
+    printf("Total Chunks: %zd\n", fileMetaData->totalChunk);
+    printf("Total Bytes: %zd\n", fileMetaData->totalByte);
     printf("Hash: ");
     for (int i = 0; i < 32; i++)
     {
-        printf("%02x", fileMetaData.fileHash[i]);
+        printf("%02x", fileMetaData->fileHash[i]);
     }
     printf("\n=====================\n");
 }

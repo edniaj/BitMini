@@ -166,11 +166,3 @@ void create_empty_bitfield(const char *metadata_filepath, const char *bitfield_f
     free(bitfield);
 }
 
-/* Main function */
-// int main() {
-//     const char *metadata_filepath = "gray_cat.meta";
-//     const char *bitfield_filepath = "gray_cat.bitfield";
-
-//     create_filled_bitfield(metadata_filepath, bitfield_filepath);
-//     return 0;
-// }

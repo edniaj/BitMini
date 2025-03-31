@@ -2,6 +2,8 @@
     "files.associations": {
         "stdio.h": "c",
         "meta.h": "c",
-        "errno.h": "c"
+        "errno.h": "c",
+        "bitfield.h": "c",
+        "peercommunication.h": "c"
     }
 }

@@ -11,4 +11,5 @@ brew install openssl
 run docker
 1. docker build -t c-dev-env .      | build docker file 
 2. ./run-dev.ps1                    | to open up thhe ports 
-3. docker exec -it c-devbox bash    | open shell
+3. open shell
+docker exec -it c-devbox bash
