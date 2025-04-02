@@ -1,0 +1,52 @@
+root@bd6548a02aec:/workspace/sample_v6/seeder# gcc seeder.c database.c meta.c bitfield.c seed.c leech.c peerCommunication.c -o seeder -lssl -lcrypto -Wno-deprecated-declarations && ./seeder
+/usr/bin/ld: /tmp/ccQI3AgK.o: in function `setup_seeder_socket':
+seed.c:(.text+0x0): multiple definition of `setup_seeder_socket'; /tmp/ccuAorpO.o:seeder.c:(.text+0x934): first defined here  
+/usr/bin/ld: /tmp/ccQI3AgK.o: in function `handle_peer_connection':
+seed.c:(.text+0x14f): multiple definition of `handle_peer_connection'; /tmp/ccuAorpO.o:seeder.c:(.text+0xa83): first defined here
+root@bd6548a02aec:/workspace/sample_v6/seeder# gcc seeder.c database.c meta.c bitfield.c seed.c leech.c peerCommunication.c -o seeder -lssl -lcrypto -Wno-deprecated-declarations && ./seeder
+/usr/bin/ld: /tmp/cczXjhOf.o: in function `setup_seeder_socket':
+seed.c:(.text+0x0): multiple definition of `setup_seeder_socket'; /tmp/ccDyza4e.o:seeder.c:(.text+0x934): first defined here  
+/usr/bin/ld: /tmp/cczXjhOf.o: in function `handle_peer_connection':
+seed.c:(.text+0x14f): multiple definition of `handle_peer_connection'; /tmp/ccDyza4e.o:seeder.c:(.text+0xa83): first defined here
+/usr/bin/ld: /tmp/cczXjhOf.o: in function `find_binary_file_path':
+seed.c:(.text+0x1b4): multiple definition of `find_binary_file_path'; /tmp/ccDyza4e.o:seeder.c:(.text+0xae8): first defined here
+/usr/bin/ld: /tmp/cczXjhOf.o: in function `find_bitfield_file_path':
+seed.c:(.text+0x4b4): multiple definition of `find_bitfield_file_path'; /tmp/ccDyza4e.o:seeder.c:(.text+0xde8): first defined 
+here
+/usr/bin/ld: /tmp/cczXjhOf.o: in function `send_chunk':
+seed.c:(.text+0x75b): multiple definition of `send_chunk'; /tmp/ccDyza4e.o:seeder.c:(.text+0x108f): first defined here        
+/usr/bin/ld: /tmp/cczXjhOf.o: in function `handle_peer_request':
+seed.c:(.text+0x882): multiple definition of `handle_peer_request'; /tmp/ccDyza4e.o:seeder.c:(.text+0x11b6): first defined here
+/usr/bin/ld: /tmp/ccecCR4B.o: in function `request_bitfield':
+leech.c:(.text+0x0): multiple definition of `request_bitfield'; /tmp/ccDyza4e.o:seeder.c:(.text+0x0): first defined here      
+/usr/bin/ld: /tmp/ccecCR4B.o: in function `request_chunk':
+leech.c:(.text+0x231): multiple definition of `request_chunk'; /tmp/ccDyza4e.o:seeder.c:(.text+0x231): first defined here     
+/usr/bin/ld: /tmp/ccecCR4B.o: in function `leech_from_seeder':
+leech.c:(.text+0x5f6): multiple definition of `leech_from_seeder'; /tmp/ccDyza4e.o:seeder.c:(.text+0x5f6): first defined here 
+/usr/bin/ld: /tmp/ccecCR4B.o: in function `leeching':
+leech.c:(.text+0x7d8): multiple definition of `leeching'; /tmp/ccDyza4e.o:seeder.c:(.text+0x7d8): first defined here
+collect2: error: ld returned 1 exit status
+
+root@bd6548a02aec:/workspace/sample_v6/seeder# gcc seeder.c database.c meta.c bitfield.c seed.c leech.c peerCommunication.c -o seeder -lssl -lcrypto -Wno-deprecated-declarations && ./seeder
+/usr/bin/ld: /tmp/ccNSjMYG.o: in function `setup_seeder_socket':
+seed.c:(.text+0x0): multiple definition of `setup_seeder_socket'; /tmp/ccDSNhWb.o:seeder.c:(.text+0x934): first defined here  
+/usr/bin/ld: /tmp/ccNSjMYG.o: in function `handle_peer_connection':
+seed.c:(.text+0x14f): multiple definition of `handle_peer_connection'; /tmp/ccDSNhWb.o:seeder.c:(.text+0xa83): first defined here
+/usr/bin/ld: /tmp/ccNSjMYG.o: in function `find_binary_file_path':
+seed.c:(.text+0x1b4): multiple definition of `find_binary_file_path'; /tmp/ccDSNhWb.o:seeder.c:(.text+0xae8): first defined here
+/usr/bin/ld: /tmp/ccNSjMYG.o: in function `find_bitfield_file_path':
+seed.c:(.text+0x4b4): multiple definition of `find_bitfield_file_path'; /tmp/ccDSNhWb.o:seeder.c:(.text+0xde8): first defined 
+here
+/usr/bin/ld: /tmp/ccNSjMYG.o: in function `send_chunk':
+seed.c:(.text+0x75b): multiple definition of `send_chunk'; /tmp/ccDSNhWb.o:seeder.c:(.text+0x108f): first defined here        
+/usr/bin/ld: /tmp/ccNSjMYG.o: in function `handle_peer_request':
+seed.c:(.text+0x882): multiple definition of `handle_peer_request'; /tmp/ccDSNhWb.o:seeder.c:(.text+0x11b6): first defined here
+/usr/bin/ld: /tmp/ccYKtB6S.o: in function `request_bitfield':
+leech.c:(.text+0x0): multiple definition of `request_bitfield'; /tmp/ccDSNhWb.o:seeder.c:(.text+0x0): first defined here      
+/usr/bin/ld: /tmp/ccYKtB6S.o: in function `request_chunk':
+leech.c:(.text+0x231): multiple definition of `request_chunk'; /tmp/ccDSNhWb.o:seeder.c:(.text+0x231): first defined here     
+/usr/bin/ld: /tmp/ccYKtB6S.o: in function `leech_from_seeder':
+leech.c:(.text+0x5f6): multiple definition of `leech_from_seeder'; /tmp/ccDSNhWb.o:seeder.c:(.text+0x5f6): first defined here 
+/usr/bin/ld: /tmp/ccYKtB6S.o: in function `leeching':
+leech.c:(.text+0x7d8): multiple definition of `leeching'; /tmp/ccDSNhWb.o:seeder.c:(.text+0x7d8): first defined here
+collect2: error: ld returned 1 exit status

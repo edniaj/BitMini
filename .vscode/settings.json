@@ -4,6 +4,9 @@
         "meta.h": "c",
         "errno.h": "c",
         "bitfield.h": "c",
-        "peercommunication.h": "c"
+        "peercommunication.h": "c",
+        "leech.h": "c",
+        "stdlib.h": "c",
+        "database.h": "c"
     }
 }
