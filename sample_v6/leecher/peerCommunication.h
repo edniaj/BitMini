@@ -59,9 +59,9 @@ typedef struct BitfieldRequest
     ssize_t fileID;
 } BitfieldRequest;
 
-typedef struct BitField{
+typedef struct Bitfield{
     uint8_t* bitfield;
-} BitField;
+} Bitfield;
 
 // Now define the union that uses those structures
 typedef union PeerMessageBody
@@ -69,7 +69,7 @@ typedef union PeerMessageBody
     ChunkRequest chunkRequest;
     TransferChunk transferChunk;
     BitfieldRequest bitfieldRequest;
-    BitField bitfield;
+    Bitfield bitfield;
 } PeerMessageBody;
 
 // Define the header

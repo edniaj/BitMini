@@ -21,10 +21,7 @@ gcc meta.c database.c tracker.c -o tracker  -I/opt/homebrew/opt/openssl/include 
 
 FOR DOCKER CONTAINERS
 leecher
-gcc leecher.c meta.c -o leecher -lssl -lcrypto -Wno-deprecated-declarations && ./leecher
-
-seeder
-gcc seeder.c database.c meta.c bitfield.c -o seeder -lssl -lcrypto -Wno-deprecated-declarations && ./seeder
+gcc seeder.c database.c meta.c bitfield.c seed.c leech.c peerCommunication.c -o seeder -lssl -lcrypto -Wno-deprecated-declarations && ./seeder
 
 meta
 gcc meta.c database.c  tracker.c -o tracker -lssl -lcrypto -Wno-deprecated-declarations && ./tracker
@@ -34,3 +31,12 @@ gcc bitfield.c -o bitfield -lssl -lcrypto -Wno-deprecated-declarations && ./bitf
 
 tracker
 gcc meta.c database.c tracker.c -o tracker -lssl -lcrypto -Wno-deprecated-declarations && ./tracker
+
+seeder
+gcc seeder.c database.c meta.c bitfield.c seed.c leech.c peerCommunication.c -o seeder -lssl -lcrypto -Wno-deprecated-declarations && ./seeder
+
+1. docker build -t c-dev-env .      | build docker file 
+2. to open up thhe ports 
+./run-dev.ps1   
+3. open shell
+docker exec -it c-devbox bash

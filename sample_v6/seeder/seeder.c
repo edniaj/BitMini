@@ -11,8 +11,8 @@
 #include "meta.h" // Your FileMetadata struct, etc.
 #include "database.h"
 #include "bitfield.h"
-#include "leech.c"
-#include "seed.c"
+#include "leech.h"
+#include "seed.h"
 
 #define STORAGE_DIR "./storage_downloads/"
 #define CHUNK_DATA_SIZE 1024
@@ -95,7 +95,6 @@ static int connect_to_tracker();
 static void disconnect_from_tracker(int tracker_socket);
 char *generate_binary_filepath(char *metaFilePath);
 // Seeder Implementation Functions
-int setup_seeder_socket(int port);
 void request_metadata_by_filename(int tracker_socket, const char *metaFilename, FileMetadata *fileMetaData);
 
 /* ------------------------------------------------------------------------
