@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 // Define the struct
-typedef struct FileMetaData
+typedef struct FileMetadata
 {
     char filename[128];
     ssize_t fileID;

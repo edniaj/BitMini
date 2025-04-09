@@ -1,4 +1,17 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <errno.h>
+
+#include "database.h"
 #include "tracker.h"
+
+
 #define BUFFER_SIZE (1024 * 5)
 #define SERVER_PORT 5555
 #define SERVER_IP "127.0.0.1"
@@ -7,38 +20,108 @@
 #define MAX_SEEDERS_PER_FILE 64
 #define MAX_SEEDERS 1000
 
-// urgent : Theres a bug in the lookup of binary files.
+/* Global state
+*/
 
+typedef struct {
+    TrackerFSMState current_state;
+    int listen_socket;
+    int client_socket;
+} TrackerContext;
 
-
-
-
+void tracker_event_handler();
+void tracker_fsm_handler();
 
 /* --------------------------------------------------------------------------
    🔹 Message Types
    -------------------------------------------------------------------------- */
+typedef enum TrackerFSM {
+    Tracker_FSM_INIT,
+    Tracker_FSM_LISTENING,
+    Tracker_FSM_HANDLE_EVENT,
+    Tracker_FSM_ERROR
+    Tracker_FSM_CLEANUP,
+    Tracker_FSM_CLOSING
+} TrackerFSM;
+
+typedef enum FSM_TRACKER_EVENT{
+    FSM_EVENT_REQUEST_ALL_AVAILABLE_SEED = 0,
+    FSM_EVENT_REQUEST_META_DATA,
+    FSM_EVENT_REQUEST_SEEDER_BY_FILEID,
+    FSM_EVENT_REQUEST_CREATE_SEEDER,
+    FSM_EVENT_REQUEST_DELETE_SEEDER,
+    FSM_EVENT_REQUEST_CREATE_NEW_SEED,
+    FSM_EVENT_REQUEST_PARTICIPATE_SEED_BY_FILEID,
+    FSM_EVENT_REQUEST_UNPARTICIPATE_SEED,
+    FSM_EVENT_ACK_CREATE_NEW_SEED,
+    FSM_EVENT_ACK_PARTICIPATE_SEED_BY_FILEID,
+    FSM_EVENT_ACK_SEEDER_BY_FILEID,
+    FSM_EVENT_RESPOND_ERROR,
+    FSM_EVENT_NULL
+} FSM_TRACKER_EVENT;
 
 
+   
+typedef enum
+{
+    MSG_REQUEST_ALL_AVAILABLE_SEED = 0,
+    MSG_REQUEST_META_DATA,
+    MSG_REQUEST_SEEDER_BY_FILEID,
+    MSG_REQUEST_CREATE_SEEDER,
+    MSG_REQUEST_DELETE_SEEDER,
+    MSG_REQUEST_CREATE_NEW_SEED,
+    MSG_REQUEST_PARTICIPATE_SEED_BY_FILEID,
+    MSG_REQUEST_UNPARTICIPATE_SEED,
+    MSG_ACK_CREATE_NEW_SEED, //  - DONE
+    MSG_ACK_PARTICIPATE_SEED_BY_FILEID,
+    MSG_ACK_SEEDER_BY_FILEID,
+    MSG_RESPOND_ERROR
+} TrackerMessageType;
 
-
+typedef struct PeerInfo
+{
+    char ip_address[64];
+    char port[16];
+} PeerInfo;
 
 static PeerInfo list_seeders[MAX_SEEDERS];
 static PeerInfo *file_to_seeders[MAX_FILES][MAX_SEEDERS_PER_FILE];
 
+typedef struct TrackerMessageHeader
+{
+    TrackerMessageType type;
+    ssize_t bodySize; // size of body
+} TrackerMessageHeader;
+
+typedef struct PeerWithFileID
+{
+    PeerInfo singleSeeder;
+    ssize_t fileID;
+} PeerWithFileID;
+
+typedef struct
+{
+    char metaFilename[256]; // or whatever size you use
+} RequestMetadataBody;
+
+typedef union
+{
+    PeerInfo singleSeeder;     // For REGISTER / UNREGISTER
+    PeerInfo seederList[64];   // For returning a list of seeders
+    FileMetadata fileMetadata; // For CREATE_NEW_SEED
+    ssize_t fileID;            // For simple queries
+    PeerWithFileID peerWithFileID;
+    RequestMetadataBody requestMetaData; //
+    char raw[512];                       // fallback
+} TrackerMessageBody;
+
+typedef struct
+{
+    TrackerMessageHeader header;
+    TrackerMessageBody body;
+} TrackerMessage;
 
 
-/* --------------------------------------------------------------------------
-   🔹 Global Variables
-   -------------------------------------------------------------------------- */
-static TrackerContext* ctx;
-static TrackerMessageHeader* header;
-static TrackerMessageBody* body;
-static int listen_socketfd; // Global variable to hold the listening socket
-
-// Forward declarations for any missing functions
-void exit_success(void) {
-    exit(EXIT_SUCCESS);
-}
 
 /* --------------------------------------------------------------------------
    🔹 Function Implementations
@@ -67,7 +150,7 @@ int setup_server(void)
     if (!server)
     {
         fprintf(stderr, "ERROR, no such host\n");
-        ctx->current_state = Tracker_FSM_ERROR;
+        close(listen_socketfd);
         exit(EXIT_FAILURE);
     }
 
@@ -80,14 +163,14 @@ int setup_server(void)
     if (bind(listen_socketfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
     {
         perror("ERROR on binding");
-        ctx->current_state = Tracker_FSM_ERROR;
+        close(listen_socketfd);
         exit(EXIT_FAILURE);
     }
 
     if (listen(listen_socketfd, 10) < 0)
     {
         perror("ERROR on listen");
-        ctx->current_state = Tracker_FSM_ERROR;
+        close(listen_socketfd);
         exit(EXIT_FAILURE);
     }
 
@@ -208,16 +291,8 @@ void handle_create_seeder(int client_socket, const PeerInfo *p)
 
 void handle_request_all_available_files(int client_socket)
 {
-    size_t fileCount = 0; //placeholder
+    size_t fileCount = 0;
     FileEntry *fileList = load_file_entries(&fileCount);
-    printf("fileCount: %zd\n", fileCount);
-    printf("\nAvailable Files:\n");
-    printf("---------------------------\n");
-
-    for (size_t i = 0; i < fileCount; i++) {
-        printf("index i : %ld" ,i);
-        printf("File ID: %04zd, Total Bytes: %zd, Meta File: %s\n",fileList[i].fileID, fileList[i].totalBytes, fileList[i].metaFilename);
-    }
 
     if (!fileList || fileCount == 0)
     {
@@ -225,7 +300,7 @@ void handle_request_all_available_files(int client_socket)
         write(client_socket, error_msg, strlen(error_msg));
         return;
     }
-    printf("Sending fileCount: %zu\n", fileCount);
+
     write(client_socket, &fileCount, sizeof(fileCount));
 
     size_t total_bytes = fileCount * sizeof(FileEntry);
@@ -256,19 +331,18 @@ void handle_create_new_seed(int client_socket, const FileMetadata *meta)
         printf("%02x", meta->fileHash[i]);
     printf("\n");
 
-    printf("1");
     // Step 3: Acknowledge with new fileID
     TrackerMessageHeader ack_header;
     ack_header.type = MSG_ACK_CREATE_NEW_SEED;
     ack_header.bodySize = sizeof(ssize_t);
-    printf("2");
-    TrackerMessageBody ack_body = {0};
+
+    TrackerMessageBody ack_body;
     ack_body.fileID = fileID;
-    printf("sending ack ");
-    printf("ctx->client_socket: %d\n", ctx->client_socket);
-    write(ctx->client_socket, &ack_header, sizeof(ack_header));
-    write(ctx->client_socket, &ack_body, sizeof(ack_body)); // 👈 send full TrackerMessageBody
-    printf("done \nsending ack \n\n\n ");
+    printf("sending ack ")
+
+    write(client_socket, &ack_header, sizeof(ack_header));
+    write(client_socket, &ack_body, sizeof(ack_body)); // 👈 send full TrackerMessageBody
+    printf("done sending ack ")
 }
 
 void handle_request_participate_by_fileID(int client_socket, const PeerWithFileID *peerWithFileID)
@@ -399,310 +473,149 @@ void handle_request_metadata(int client_socket, const RequestMetadataBody *req)
     printf("✅ Sent metadata for file: %s\n", req->metaFilename);
 }
 
-void read_header(){
-    ssize_t bytes_read = read(ctx->client_socket, header, sizeof(TrackerMessageHeader));
-    if (bytes_read < 0)
-    {
-        perror("ERROR reading header");
-        ctx->current_state = Tracker_FSM_ERROR;
-        return;
-    }
-    if (bytes_read == 0 ) {
-        printf("Client disconnected.\n");
-        ctx->current_state = Tracker_FSM_LISTENING_PEER;
-        return;
-    }
-}
 
-void read_body(){
-    
-    if (header->bodySize > 0)
-    {
-        ssize_t bytes_read = read(ctx->client_socket, body, header->bodySize);
-        if (bytes_read < 0)
-        {
-            perror("ERROR reading body");
-            ctx->current_state = Tracker_FSM_ERROR;
-            
-            return;
-        }
-        if (bytes_read < header->bodySize)
-        {
-            fprintf(stderr, "Partial read: expected %zd, got %zd\n", header->bodySize, bytes_read);
-            ctx->current_state = Tracker_FSM_ERROR;
-            
-            return;
-        }
 
-        if (bytes_read == 0 ) {
-            printf("Client disconnected.\n");
-            ctx->current_state = Tracker_FSM_LISTENING_PEER;
-            return;
-        }
-    }
-}
-
-void tracker_event_handler(FSM_TRACKER_EVENT event) {
-
-    /* Read Header and Body was handled in tracker_listening_event() */
-    switch (event)
-    {
-    case FSM_EVENT_REQUEST_CREATE_SEEDER:
-        if (header->bodySize == sizeof(PeerInfo)) {            
-            handle_create_seeder(ctx->client_socket, &(body->singleSeeder));
-            ctx->current_state = Tracker_FSM_LISTENING_EVENT;
-        } else {
-            char err[] = "Invalid body size for CREATE_SEEDER.\n";
-            ctx->current_state = Tracker_FSM_ERROR;
-            write(ctx->client_socket, err, strlen(err));
-        }
-        
-        break;
-
-    case FSM_EVENT_REQUEST_ALL_AVAILABLE_SEED:
-        printf("requesting all seed");
-        handle_request_all_available_files(ctx->client_socket);
-        ctx->current_state = Tracker_FSM_LISTENING_EVENT;
-
-        break;
-
-    case FSM_EVENT_REQUEST_CREATE_NEW_SEED:
-        
-        if (header->bodySize == sizeof(FileMetadata)) {
-            handle_create_new_seed(ctx->client_socket, &(body->fileMetadata));
-        } else {
-            char err[] = "Invalid body size for CREATE_NEW_SEED.\n";
-            write(ctx->client_socket, err, strlen(err));
-            ctx->current_state = Tracker_FSM_ERROR;
-        }
-        break;
-
-    case FSM_EVENT_REQUEST_PARTICIPATE_SEED_BY_FILEID:
-        printf("hello");
-        
-        handle_request_participate_by_fileID(ctx->client_socket, &(body->peerWithFileID));
-        break;
-
-    case FSM_EVENT_REQUEST_SEEDER_BY_FILEID:
-        
-        handle_request_seeder_by_fileID(ctx->client_socket, body->fileID);
-        break;
-
-    case FSM_EVENT_REQUEST_META_DATA:
-        
-        if (header->bodySize == sizeof(RequestMetadataBody)) {
-            handle_request_metadata(ctx->client_socket, &(body->requestMetaData));
-        } else {
-            char err[] = "Invalid body size for REQUEST_META_DATA.\n";
-            write(ctx->client_socket, err, strlen(err));
-        }
-        break;
-
-    default: {
-        char error_msg[] = "Unknown or unimplemented FSM event.\n";
-        write(ctx->client_socket, error_msg, strlen(error_msg));
-        fprintf(stderr, "⚠️ Unknown FSM event: %d\n", event);
-        break;
-        }
-    }
-
-    ctx->current_state = Tracker_FSM_LISTENING_EVENT;
-
-}
-
-void tracker_listening_peer(){
-    
-    struct sockaddr_in client_addr;
-    socklen_t client_addr_length = sizeof(client_addr);
-
-    int client_socket = accept(listen_socketfd,
-                               (struct sockaddr *)&client_addr,
-                               &client_addr_length);
-    if (client_socket < 0)
-    {
-        perror("ERROR accepting connection");
-        ctx->current_state = Tracker_FSM_ERROR;
-    }
-
-    printf("✅ New connection established.\n");
-    ctx->client_socket = client_socket;
-    ctx->current_state = Tracker_FSM_LISTENING_EVENT;
-    return;
-}
-
-void tracker_listening_event()
+void handle_client(int client_socket)
 {
-
-        
+    TrackerMessageHeader header;
+    TrackerMessageBody body;
+    memset(&header, 0, sizeof(header));
+    memset(&body, 0, sizeof(body));
+    while (1)
+    {
+        printf("\nListening to connections :)\n");
+        fflush(stdout); // ✅ force print to terminal
 
         // 1) Read header
-        ssize_t bytes_read = read(ctx->client_socket, header, sizeof(TrackerMessageHeader));
-        if (bytes_read == 0 ) {
-            printf("Client disconnected.\n");
-            ctx->current_state = Tracker_FSM_LISTENING_PEER;
-            return;
-        }
+        ssize_t bytes_read = read(client_socket, &header, sizeof(header));
+
         if (bytes_read > 0)
         {
-            printf("📩 Read header: type=%d, bodySize=%zd\n", header->type, header->bodySize);
+            printf("📩 Read header: type=%d, bodySize=%zd\n", header.type, header.bodySize);
         }
         else
         {
             if (bytes_read < 0)
                 perror("ERROR reading header");
             else
-                printf("Client disconnected.\n");            
-            ctx->current_state = Tracker_FSM_ERROR;
+                printf("Client disconnected.\n");
+            close(client_socket);
             return;
         }
 
         // Read the body
-        if (header->bodySize >= 0)
+        if (header.bodySize > 0)
         {
-            bytes_read = read(ctx->client_socket, body, header->bodySize);
+            bytes_read = read(client_socket, &body, header.bodySize);
             if (bytes_read < 0)
             {
                 perror("ERROR reading body");
-                ctx->current_state = Tracker_FSM_ERROR;
-                ctx->current_state = Tracker_FSM_ERROR;            
+                close(client_socket);
                 return;
             }
-            if (bytes_read < header->bodySize)
+            if (bytes_read < header.bodySize)
             {
-                fprintf(stderr, "Partial read: expected %zd, got %zd\n", header->bodySize, bytes_read);
-                ctx->current_state = Tracker_FSM_ERROR;
+                fprintf(stderr, "Partial read: expected %zd, got %zd\n", header.bodySize, bytes_read);
+                close(client_socket);
                 return;
-            }
-
-            if (bytes_read >= 0) {
-                printf("📩 Read body: type=%d, bodySize=%zd\n", header->type, header->bodySize);                
             }
         }
 
-        ctx->current_state = Tracker_FSM_HANDLE_EVENT;
-    
-
-}
-
-FSM_TRACKER_EVENT map_msg_type_to_fsm_event(TrackerMessageType type) {
-    switch (type) {
-        case MSG_REQUEST_ALL_AVAILABLE_SEED:       return FSM_EVENT_REQUEST_ALL_AVAILABLE_SEED;
-        case MSG_REQUEST_META_DATA:                return FSM_EVENT_REQUEST_META_DATA;
-        case MSG_REQUEST_SEEDER_BY_FILEID:         return FSM_EVENT_REQUEST_SEEDER_BY_FILEID;
-        case MSG_REQUEST_CREATE_SEEDER:            return FSM_EVENT_REQUEST_CREATE_SEEDER;
-        case MSG_REQUEST_DELETE_SEEDER:            return FSM_EVENT_REQUEST_DELETE_SEEDER;
-        case MSG_REQUEST_CREATE_NEW_SEED:          return FSM_EVENT_REQUEST_CREATE_NEW_SEED;
-        case MSG_REQUEST_PARTICIPATE_SEED_BY_FILEID:return FSM_EVENT_REQUEST_PARTICIPATE_SEED_BY_FILEID;
-        case MSG_REQUEST_UNPARTICIPATE_SEED:       return FSM_EVENT_REQUEST_UNPARTICIPATE_SEED;
-        case MSG_ACK_CREATE_NEW_SEED:              return FSM_EVENT_ACK_CREATE_NEW_SEED;
-        case MSG_ACK_PARTICIPATE_SEED_BY_FILEID:   return FSM_EVENT_ACK_PARTICIPATE_SEED_BY_FILEID;
-        case MSG_ACK_SEEDER_BY_FILEID:             return FSM_EVENT_ACK_SEEDER_BY_FILEID;
-        case MSG_RESPOND_ERROR:                    return FSM_EVENT_RESPOND_ERROR;
-        default:                                   return FSM_EVENT_NULL;
-    }
-}
-
-void tracker_fsm_handler(){
-    switch (ctx->current_state)
-    {
-    case Tracker_FSM_INIT:
-        tracker_init();
-        break;
-    case Tracker_FSM_LISTENING_PEER:
-        tracker_listening_peer();
-        break;
-    case Tracker_FSM_LISTENING_EVENT:
-        tracker_listening_event();
-        break;
-    case Tracker_FSM_HANDLE_EVENT: {
-        FSM_TRACKER_EVENT event = map_msg_type_to_fsm_event(header->type);
-        printf("FSM_TRACKER_EVENT: %d\n", event);
-        tracker_event_handler(event);
-        break;
-    }
-    case Tracker_FSM_ERROR:
-        tracker_error_handler();
-        break;
-    case Tracker_FSM_CLEANUP:
-        tracker_cleanup();
-        break;
-    case Tracker_FSM_CLOSING:
-        tracker_closing();
-        break;
-    default:
-        break;
-        
-    }
-}
-
-void tracker_error_handler() {
-    printf("FSM Reached error ");
-    ctx->current_state = Tracker_FSM_CLOSING;
-}
-
-void tracker_closing() {
-    printf("FSM Reached closing");
-    if (ctx->listen_socket >= 0) {
-        close(ctx->listen_socket);
-    }
-    if (ctx->client_socket >= 0) {
-        close(ctx->client_socket);
-    }
-    ctx->current_state = Tracker_FSM_CLEANUP;
-
-    exit_success();
-}
-
-void tracker_cleanup() {
-    free(ctx);
-    free(header);
-    free(body);
-    printf("FSM Reached cleanup");
-    return;
-}
-
-void tracker_init(){
-    // Allocate memory for the global structures
-    header = malloc(sizeof(TrackerMessageHeader));
-    body = malloc(sizeof(TrackerMessageBody));
-    
-    if (header) {
-        memset(header, 0, sizeof(TrackerMessageHeader));
-    }
-    if (body) {
-        memset(body, 0, sizeof(TrackerMessageBody));
-    }
-    
-    init_seeders();
-    listen_socketfd = setup_server();
-    ctx->listen_socket = listen_socketfd;
-    ctx->current_state = Tracker_FSM_LISTENING_PEER;
-}
-
-void tracker_close_peer(){
-    if (ctx->client_socket >= 0) {
-        printf("closing client socket");
-        close(ctx->client_socket);
-    }
-    ctx->current_state = Tracker_FSM_LISTENING_PEER;
+        // Dispatch
+        switch (header.type)
+        {
+        case MSG_REQUEST_CREATE_SEEDER:
+        {
+            // Expecting a PeerInfo in body.singleSeeder
+            if (header.bodySize == sizeof(PeerInfo))
+            {
+                handle_create_seeder(client_socket, &body.singleSeeder);
+            }
+            else
+            {
+                char err[] = "Invalid body size for CREATE_SEEDER.\n";
+                write(client_socket, err, strlen(err));
+            }
+            break;
+        }
+        case MSG_REQUEST_ALL_AVAILABLE_SEED:
+        {
+            handle_request_all_available_files(client_socket);
+            break;
+        }
+        case MSG_REQUEST_CREATE_NEW_SEED:
+        {
+            if (header.bodySize == sizeof(FileMetadata))
+            {
+                handle_create_new_seed(client_socket, &body.fileMetadata);
+            }
+            else
+            {
+                char err[] = "Invalid body size for CREATE_NEW_SEED.\n";
+                write(client_socket, err, strlen(err));
+            }
+            break;
+        }
+        case MSG_REQUEST_PARTICIPATE_SEED_BY_FILEID:
+        {
+            handle_request_participate_by_fileID(client_socket, &body.peerWithFileID);
+            break;
+        }
+        case MSG_REQUEST_SEEDER_BY_FILEID:
+        {
+            handle_request_seeder_by_fileID(client_socket, body.fileID);
+            break;
+        }
+        case MSG_REQUEST_META_DATA:
+        {   
+            printf("cat");
+            if (header.bodySize == sizeof(RequestMetadataBody))
+            {
+                handle_request_metadata(client_socket, &body.requestMetaData);
+            }
+            else
+            {
+                char err[] = "Invalid body size for REQUEST_META_DATA.\n";
+                write(client_socket, err, strlen(err));
+            }
+            break;
+        }
+        default:
+        {
+            char error_msg[] = "Unknown request type.\n";
+            write(client_socket, error_msg, strlen(error_msg));
+            fprintf(stderr, "⚠️ Unknown request type: %d\n", header.type);
+            break;
+        }
+        }
+    } // end while(1)
 }
 
 /* Main function */
 int main(void)
 {
-    ctx = malloc(sizeof(TrackerContext));
-    if (ctx) {
-        memset(ctx, 0, sizeof(TrackerContext));
-    }
-    
-    tracker_init();
+    init_seeders();
 
-    while (ctx->current_state != Tracker_FSM_CLOSING) {
-        tracker_fsm_handler();
+    int listen_socketfd = setup_server();
+
+    while (1)
+    {
+        struct sockaddr_in client_addr;
+        socklen_t client_addr_length = sizeof(client_addr);
+
+        int client_socket = accept(listen_socketfd,
+                                   (struct sockaddr *)&client_addr,
+                                   &client_addr_length);
+        if (client_socket < 0)
+        {
+            perror("ERROR accepting connection");
+            continue;
+        }
+
+        printf("✅ New connection established.\n");
+        handle_client(client_socket);
     }
 
-    if (ctx->current_state == Tracker_FSM_CLEANUP) {
-        tracker_closing();
-    }
+    close(listen_socketfd);
     return 0;
 }
