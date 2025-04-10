@@ -256,19 +256,33 @@ void handle_create_new_seed(int client_socket, const FileMetadata *meta)
         printf("%02x", meta->fileHash[i]);
     printf("\n");
 
-    printf("1");
+    // Check if socket is still valid before sending
+    int error = 0;
+    socklen_t len = sizeof(error);
+    int retval = getsockopt(client_socket, SOL_SOCKET, SO_ERROR, &error, &len);
+    
+    if (retval != 0 || error != 0) {
+        printf("Socket error detected before sending ACK (error=%d)\n", error);
+        // Socket is no longer valid
+        ctx->current_state = Tracker_FSM_LISTENING_PEER;
+        return;
+    }
+
+    printf("Socket is valid, preparing to send ACK\n");
+    
+
     // Step 3: Acknowledge with new fileID
     TrackerMessageHeader ack_header;
+    memset(&ack_header, 0, sizeof(ack_header));
     ack_header.type = MSG_ACK_CREATE_NEW_SEED;
     ack_header.bodySize = sizeof(ssize_t);
-    printf("2");
-    TrackerMessageBody ack_body = {0};
-    ack_body.fileID = fileID;
+
     printf("sending ack ");
     printf("ctx->client_socket: %d\n", ctx->client_socket);
+    printf("Sending ACK header: type=%d, bodySize=%zd\n", ack_header.type, ack_header.bodySize);
     write(ctx->client_socket, &ack_header, sizeof(ack_header));
-    write(ctx->client_socket, &ack_body, sizeof(ack_body)); // 👈 send full TrackerMessageBody
-    printf("done \nsending ack \n\n\n ");
+    write(ctx->client_socket, &fileID, sizeof(ssize_t)); // send full TrackerMessageBody
+    printf("done  - sending ack \n\n ");
 }
 
 void handle_request_participate_by_fileID(int client_socket, const PeerWithFileID *peerWithFileID)
@@ -399,49 +413,81 @@ void handle_request_metadata(int client_socket, const RequestMetadataBody *req)
     printf("✅ Sent metadata for file: %s\n", req->metaFilename);
 }
 
-void read_header(){
-    ssize_t bytes_read = read(ctx->client_socket, header, sizeof(TrackerMessageHeader));
-    if (bytes_read < 0)
-    {
-        perror("ERROR reading header");
-        ctx->current_state = Tracker_FSM_ERROR;
-        return;
-    }
-    if (bytes_read == 0 ) {
-        printf("Client disconnected.\n");
-        ctx->current_state = Tracker_FSM_LISTENING_PEER;
-        return;
-    }
-}
-
-void read_body(){
+int read_header() {
+    printf("Attempting to read header of size %zu bytes...\n", sizeof(TrackerMessageHeader));
     
-    if (header->bodySize > 0)
-    {
-        ssize_t bytes_read = read(ctx->client_socket, body, header->bodySize);
-        if (bytes_read < 0)
-        {
-            perror("ERROR reading body");
-            ctx->current_state = Tracker_FSM_ERROR;
-            
-            return;
-        }
-        if (bytes_read < header->bodySize)
-        {
-            fprintf(stderr, "Partial read: expected %zd, got %zd\n", header->bodySize, bytes_read);
-            ctx->current_state = Tracker_FSM_ERROR;
-            
-            return;
-        }
-
-        if (bytes_read == 0 ) {
-            printf("Client disconnected.\n");
+    ssize_t bytes_read = read(ctx->client_socket, header, sizeof(TrackerMessageHeader));
+    
+    printf("Header read result: %zd bytes (expected %zu)\n", bytes_read, sizeof(TrackerMessageHeader));
+    
+    // IMPORTANT: Only check errno if bytes_read < 0
+    if (bytes_read < 0) {
+        printf("ERROR: Header read failed (bytes_read = %zd)\n", bytes_read);
+        if (errno == ECONNRESET) {
+            printf("Detected ECONNRESET: Peer disconnected abruptly.\n");
             ctx->current_state = Tracker_FSM_LISTENING_PEER;
-            return;
+            return 1;
+        } else {
+            printf("Socket error: %s (errno=%d)\n", strerror(errno), errno);
+            ctx->current_state = Tracker_FSM_ERROR;
+            return 1;
+        }
+        return 1;
+    }
+    
+    if (bytes_read == 0) {
+        printf("Graceful disconnection: Client closed connection (bytes_read = 0)\n");
+        ctx->current_state = Tracker_FSM_LISTENING_PEER;
+        return 1;
+    }
+    
+    if (bytes_read < sizeof(TrackerMessageHeader)) {
+        printf("WARNING: Incomplete header read! Got %zd of %zu bytes\n", 
+               bytes_read, sizeof(TrackerMessageHeader));
+        ctx->current_state = Tracker_FSM_ERROR;
+        return 1;
+    }
+    
+    // Print header contents for debugging
+    printf("Header read successfully: Type=%d, BodySize=%zd\n", 
+           header->type, header->bodySize);
+    
+    return 0;
+}
+int read_body() {
+    if (header->bodySize > 0) {
+        size_t total_bytes_read = 0;
+        char* buffer_position = (char*)body; // Cast to char* for pointer arithmetic
+        
+        // Keep reading until we have all the bytes or encounter an error
+        while (total_bytes_read < header->bodySize) {
+            ssize_t bytes_read = read(ctx->client_socket, 
+                                      buffer_position + total_bytes_read, 
+                                      header->bodySize - total_bytes_read);
+            
+            if (bytes_read < 0) {
+                if (errno == ECONNRESET) {
+                    printf("Peer disconnected abruptly (Connection reset).\n");
+                    ctx->current_state = Tracker_FSM_LISTENING_PEER;
+                    return 1;
+                }
+                perror("ERROR reading body");
+                ctx->current_state = Tracker_FSM_ERROR;
+                return 1;
+            }
+            
+            if (bytes_read == 0) {
+                printf("Client disconnected during body read.\n");
+                ctx->current_state = Tracker_FSM_LISTENING_PEER;
+                return 1;
+            }
+            
+            total_bytes_read += bytes_read;
         }
     }
+    
+    return 0; // Success
 }
-
 void tracker_event_handler(FSM_TRACKER_EVENT event) {
 
     /* Read Header and Body was handled in tracker_listening_event() */
@@ -470,7 +516,9 @@ void tracker_event_handler(FSM_TRACKER_EVENT event) {
         
         if (header->bodySize == sizeof(FileMetadata)) {
             handle_create_new_seed(ctx->client_socket, &(body->fileMetadata));
+            ctx->current_state = Tracker_FSM_LISTENING_EVENT;
         } else {
+            printf("invalid body size for CREATE_NEW_SEED.\n");
             char err[] = "Invalid body size for CREATE_NEW_SEED.\n";
             write(ctx->client_socket, err, strlen(err));
             ctx->current_state = Tracker_FSM_ERROR;
@@ -492,6 +540,7 @@ void tracker_event_handler(FSM_TRACKER_EVENT event) {
         
         if (header->bodySize == sizeof(RequestMetadataBody)) {
             handle_request_metadata(ctx->client_socket, &(body->requestMetaData));
+            ctx->current_state = Tracker_FSM_LISTENING_EVENT;
         } else {
             char err[] = "Invalid body size for REQUEST_META_DATA.\n";
             write(ctx->client_socket, err, strlen(err));
@@ -506,7 +555,7 @@ void tracker_event_handler(FSM_TRACKER_EVENT event) {
         }
     }
 
-    ctx->current_state = Tracker_FSM_LISTENING_EVENT;
+    
 
 }
 
@@ -536,48 +585,18 @@ void tracker_listening_event()
         
 
         // 1) Read header
-        ssize_t bytes_read = read(ctx->client_socket, header, sizeof(TrackerMessageHeader));
-        if (bytes_read == 0 ) {
-            printf("Client disconnected.\n");
-            ctx->current_state = Tracker_FSM_LISTENING_PEER;
-            return;
-        }
-        if (bytes_read > 0)
-        {
-            printf("📩 Read header: type=%d, bodySize=%zd\n", header->type, header->bodySize);
-        }
-        else
-        {
-            if (bytes_read < 0)
-                perror("ERROR reading header");
-            else
-                printf("Client disconnected.\n");            
-            ctx->current_state = Tracker_FSM_ERROR;
+        if (read_header() == 1 ) {
+            printf("ending read_header()");
+            // there was some special case and we should stop this function and move to the next state.
             return;
         }
 
-        // Read the body
-        if (header->bodySize >= 0)
-        {
-            bytes_read = read(ctx->client_socket, body, header->bodySize);
-            if (bytes_read < 0)
-            {
-                perror("ERROR reading body");
-                ctx->current_state = Tracker_FSM_ERROR;
-                ctx->current_state = Tracker_FSM_ERROR;            
-                return;
-            }
-            if (bytes_read < header->bodySize)
-            {
-                fprintf(stderr, "Partial read: expected %zd, got %zd\n", header->bodySize, bytes_read);
-                ctx->current_state = Tracker_FSM_ERROR;
-                return;
-            }
-
-            if (bytes_read >= 0) {
-                printf("📩 Read body: type=%d, bodySize=%zd\n", header->type, header->bodySize);                
-            }
+        if (read_body() ==1 ) {
+            // there was some special case and we should stop this function and move to the next state.
+            printf("read_body() ==1 ");
+            return ;
         }
+
 
         ctx->current_state = Tracker_FSM_HANDLE_EVENT;
     
@@ -706,3 +725,4 @@ int main(void)
     }
     return 0;
 }
+

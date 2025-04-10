@@ -236,14 +236,32 @@ static void request_create_new_seed(int tracker_socket, const char *binary_file_
     msg.body.fileMetadata = fileMeta;
 
     // Send header + body
-    write(tracker_socket, &msg.header, sizeof(msg.header));
-    write(tracker_socket, &msg.body.fileMetadata, msg.header.bodySize);
+    ssize_t bytes_written = write(tracker_socket, &msg.header, sizeof(msg.header));
+    if (bytes_written != sizeof(msg.header)) {
+        fprintf(stderr, "Failed to send message header\n");
+        return;
+    }
+    
+    bytes_written = write(tracker_socket, &msg.body.fileMetadata, msg.header.bodySize);
+    if (bytes_written != msg.header.bodySize) {
+        fprintf(stderr, "Failed to send message body\n");
+        return;
+    }
 
     // 3) Read ACK (the new fileID)
     TrackerMessageHeader ack_header;
-    read(tracker_socket, &ack_header, sizeof(ack_header));
+    ssize_t bytes_read = read(tracker_socket, &ack_header, sizeof(ack_header));
+    if (bytes_read != sizeof(ack_header)) {
+        fprintf(stderr, "Failed to read ACK header\n");
+        return;
+    }
+    
+
+
     if (ack_header.type != MSG_ACK_CREATE_NEW_SEED)
-    {
+    {   
+        printf("bytes_read: %zd\n", bytes_read);
+        printf("ack_header.type: %d\n", ack_header.type);
         fprintf(stderr, "Did not receive MSG_ACK_CREATE_NEW_SEED.\n");
         return;
     }
@@ -254,10 +272,13 @@ static void request_create_new_seed(int tracker_socket, const char *binary_file_
         return;
     }
 
-    TrackerMessageBody ack_body;
-    read(tracker_socket, &ack_body, ack_header.bodySize);
-
-    ssize_t newFileID = ack_body.fileID;
+    ssize_t newFileID;
+    bytes_read = read(tracker_socket, &newFileID, sizeof(newFileID));
+    if (bytes_read != sizeof(newFileID)) {
+        fprintf(stderr, "Failed to read file ID\n");
+        return;
+    }
+    
     printf("Tracker assigned fileID: %zd\n", newFileID);
 
     // 4) Now that we have a fileID, generate .meta path in the same folder as the PNG
@@ -275,26 +296,26 @@ static void request_create_new_seed(int tracker_socket, const char *binary_file_
     if (write_metadata(metaPath, &fileMeta) != 0)
     {
         fprintf(stderr, "Failed to write metadata: %s\n", metaPath);
-        // handle error if needed
+        free(metaPath);
+        return;
     }
-    else
-    {
-        printf("Wrote metadata file: %s\n", metaPath);
-    }
+    
+    printf("Wrote metadata file: %s\n", metaPath);
 
     // 7) Generate the .bitfield path and create the bitfield file
     char *bitfieldPath = generate_bitfield_filepath_with_id(newFileID, binary_file_path);
-    printf("bitfield path : %s\n", bitfieldPath);
     if (!bitfieldPath)
     {
         fprintf(stderr, "Failed to generate .bitfield path.\n");
+        free(metaPath);
+        return;
     }
-    else
-    {
-        create_filled_bitfield(metaPath, bitfieldPath); // Uses .meta to create .bitfield
-    }
+    
+    printf("bitfield path : %s\n", bitfieldPath);
+    create_filled_bitfield(metaPath, bitfieldPath); // Uses .meta to create .bitfield
 
     free(metaPath);
+    free(bitfieldPath);  // Fix memory leak
 }
 static PeerInfo *request_seeder_by_fileID(int tracker_socket, ssize_t fileID, size_t *num_seeders_out)
 {

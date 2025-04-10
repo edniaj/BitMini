@@ -35,7 +35,8 @@ gcc meta.c database.c tracker.c -o tracker -lssl -lcrypto -Wno-deprecated-declar
 seeder
 gcc seeder.c database.c meta.c bitfield.c seed.c leech.c peerCommunication.c -o seeder -lssl -lcrypto -Wno-deprecated-declarations && ./seeder
 
-1. docker build -t c-dev-env .      | build docker file 
+1. build docker file 
+docker build -t c-dev-env .  
 2. to open up thhe ports 
 ./run-dev.ps1   
 3. open shell

@@ -134,8 +134,8 @@ void tracker_error_handler(void);
 void tracker_closing(void);
 void tracker_cleanup(void);
 void tracker_close_peer(void);
-void read_header(void);
-void read_body(void);
+int read_header(void);
+int read_body(void);
 
 // Utility functions
 void init_seeders(void);
