@@ -372,6 +372,7 @@ void handle_request_seeder_by_fileID(int client_socket, ssize_t fileID)
     ssize_t written = write(client_socket, &ackHeader, sizeof(ackHeader));
     if (written < 0)
     {
+        ctx->current_state = Tracker_FSM_ERROR;
         perror("ERROR writing MSG_ACK_SEEDER_BY_FILEID header");
         return;
     }
@@ -382,12 +383,14 @@ void handle_request_seeder_by_fileID(int client_socket, ssize_t fileID)
         written = write(client_socket, seederList, ackHeader.bodySize);
         if (written < 0)
         {
+            ctx->current_state = Tracker_FSM_ERROR;
             perror("ERROR writing MSG_ACK_SEEDER_BY_FILEID body");
             return;
         }
     }
 
     printf("Sent %zd seeders for fileID=%zd\n", count, fileID);
+    ctx->current_state = Tracker_FSM_LISTENING_EVENT;
 }
 
 void handle_request_metadata(int client_socket, const RequestMetadataBody *req)
@@ -529,6 +532,7 @@ void tracker_event_handler(FSM_TRACKER_EVENT event) {
         printf("hello");
         
         handle_request_participate_by_fileID(ctx->client_socket, &(body->peerWithFileID));
+        ctx->current_state = Tracker_FSM_LISTENING_EVENT;
         break;
 
     case FSM_EVENT_REQUEST_SEEDER_BY_FILEID:
