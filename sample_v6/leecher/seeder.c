@@ -190,7 +190,6 @@ static int connect_to_tracker()
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(TRACKER_PORT);
 
-    // Convert IP string to binary form
     if (inet_pton(AF_INET, TRACKER_IP, &serv_addr.sin_addr) <= 0)
     {
         perror("ERROR invalid tracker IP");
@@ -536,20 +535,18 @@ static void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             request_create_new_seed(tracker_socket, input);
             break;
 
-        case 4:
-            /* Leech file by fileID
-                1. Get the metadata and store it in ./storage_downloads
-                2. Create the bitfield in ./storage_downloads
-                3. Get Seeder List
-                4. Start leeching the file from the first person. (KISS)
-            */
+        case 4: {
+            // Leech file by fileID
+            // 1. Get the metadata and store it in ./storage_downloads
+            // 2. Create the bitfield in ./storage_downloads
+            // 3. Get Seeder List
+            // 4. Start leeching the file from the first person. (KISS)
 
             // 1 Get metadata and store it
-            ssize_t *selectedFileID = malloc(sizeof(ssize_t));
+            ssize_t *selectedFileID = malloc(sizeof(ssize_t)); // or size_t if you prefer
             char *metaFilePath = get_metadata_via_cli(tracker_socket, selectedFileID);
             char *binary_filepath;
-            if (!metaFilePath)
-            {
+            if (!metaFilePath){
                 free(selectedFileID);
                 break;
             }
@@ -705,7 +702,7 @@ static void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             free(filePath);
             free(selectedFileID);
             break;
-
+        }
         case 5:
             printf("\nEnter fileID:\n");
             if (!fgets(input, 250, stdin))
