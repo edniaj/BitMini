@@ -9,13 +9,11 @@
 #include <errno.h>
 #include <arpa/inet.h> // for inet_pton(), sockadd_in, etc.
 
-#include "seeder.h"    // Include our own header first to ensure types are defined
-#include "meta.h"      // FileMetadata struct, etc.
+#include "meta.h" // Your FileMetadata struct, etc.
 #include "database.h"
 #include "bitfield.h"
 #include "leech.h"
 #include "seed.h"
-#include "peerCommunication.h"
 
 #define STORAGE_DIR "./storage_downloads/"
 #define CHUNK_DATA_SIZE 1024
@@ -25,8 +23,41 @@
 
 #define PEER_1_IP "127.0.0.1"
 #define PEER_1_PORT "6000"
+/* ------------------------------------------------------------------------
+   Type Definitions (kept in same order)
+------------------------------------------------------------------------ *
+/* ------------------------------------------------------------------------
+   (A) MINIMAL TRACKER DEFINITIONS (copied from your tracker side)
+   We only include the types needed for:
+       - MSG_REQUEST_CREATE_SEEDER
+       - MSG_REQUEST_ALL_AVAILABLE_SEED
+ ------------------------------------------------------------------------ */
 
-PeerContext *peer_ctx;
+typedef enum {
+    Peer_FSM_INIT =0,
+    Peer_FSM_CONNECTING_TO_TRACKER,
+    Peer_FSM_CONNECTED_IDLE,
+    Peer_FSM_SEEDING,
+    Peer_FSM_LEECHING,
+    Peer_FSM_PROCESSING_COMMAND,
+    Peer_FSM_ERROR,
+    Peer_FSM_CLEANUP,
+    Peer_FSM_CLOSING
+} PeerFSMState;
+
+typedef struct
+{
+    PeerFSMState current_state;
+    int tracker_fd;
+    int seeder_fd;
+    int leecher_fd;
+} PeerContext;
+
+
+
+/* ------------------------------------------------------------------------
+   Helper/Utility Functions
+------------------------------------------------------------------------ */
 
 void request_metadata_by_filename(int tracker_socket, const char *metaFilename, FileMetadata *fileMetaData)
 {
@@ -102,7 +133,7 @@ char *generate_binary_filepath(char *metaFilePath)
 /* ------------------------------------------------------------------------
     Tracker Communication Functions
  ------------------------------------------------------------------------ */
-int connect_to_tracker()
+static int connect_to_tracker()
 {
     printf("Connecting to Tracker at %s:%d...\n", TRACKER_IP, TRACKER_PORT);
 
@@ -137,10 +168,10 @@ int connect_to_tracker()
     
     printf("✅ Seeder successfully connected to Tracker at %s:%d\n", TRACKER_IP, TRACKER_PORT);
     peer_ctx->tracker_fd = sockfd;
-    peer_ctx->current_state = Peer_FSM_TRACKER_CONNECTED;
+    peer_ctx->current_state = Peer_FSM_CONNECTED_IDLE;
     return sockfd;
 }
-void disconnect_from_tracker(int tracker_socket)
+static void disconnect_from_tracker(int tracker_socket)
 {
     close(tracker_socket);
     printf("✅ Seeder successfully disconnected from Tracker\n");
@@ -149,7 +180,7 @@ void disconnect_from_tracker(int tracker_socket)
 /******************************************************************************
 SEEDER -> TRACKER FUNCTIONS
  ******************************************************************************/
-void request_create_new_seed(int tracker_socket, const char *binary_file_path)
+static void request_create_new_seed(int tracker_socket, const char *binary_file_path)
 {
     // 1) Build partial metadata (with no final fileID).
     FileMetadata fileMeta;
@@ -246,7 +277,7 @@ void request_create_new_seed(int tracker_socket, const char *binary_file_path)
     free(metaPath);
     free(bitfieldPath);  // Fix memory leak
 }
-PeerInfo *request_seeder_by_fileID(int tracker_socket, ssize_t fileID, size_t *num_seeders_out)
+static PeerInfo *request_seeder_by_fileID(int tracker_socket, ssize_t fileID, size_t *num_seeders_out)
 {
     // 1) Build the request
     TrackerMessage msg;
@@ -323,7 +354,7 @@ PeerInfo *request_seeder_by_fileID(int tracker_socket, ssize_t fileID, size_t *n
 
     return seederList;
 }
-void request_participate_seed_by_fileID(int tracker_socket, const char *myIP, const char *myPort, ssize_t fileID)
+static void request_participate_seed_by_fileID(int tracker_socket, const char *myIP, const char *myPort, ssize_t fileID)
 {
     // 1) Build the message
     TrackerMessage msg;
@@ -392,7 +423,7 @@ void request_participate_seed_by_fileID(int tracker_socket, const char *myIP, co
         }
     }
 }
-void request_create_seeder(int tracker_socket, const char *myIP, const char *myPort)
+static void request_create_seeder(int tracker_socket, const char *myIP, const char *myPort)
 {
     TrackerMessage msg;
     memset(&msg, 0, sizeof(msg));
@@ -428,7 +459,7 @@ void request_create_seeder(int tracker_socket, const char *myIP, const char *myP
     else
         perror("ERROR reading tracker response (CREATE_SEEDER)");
 }
-void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
+static void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
 {
     char *input = malloc(250);
     if (!input)
@@ -671,22 +702,19 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
         case 6:
             disconnect_from_tracker(tracker_socket);
 
+            peer_ctx->current_state = Peer_FSM_LISTENING_PEER;  
             int listen_fd = setup_seeder_socket(atoi(PEER_1_PORT));
             if (listen_fd < 0)
             {
                 // Could not start peer server
                 return;
             }
-            
+
             int return_status = handle_peer_connection(listen_fd);
             if (return_status == 1) {
                 printf("Error handling peer connection");
                 return;
             }
-
-            peer_ctx->current_state = Peer_FSM_LISTENING_PEER;
-            return;
-            
             break;
         default:
             printf("Unknown option.\n");
@@ -694,7 +722,7 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
         }
     }
 }
-void get_all_available_files(int tracker_socket)
+static void get_all_available_files(int tracker_socket)
 {
     TrackerMessage msg;
     memset(&msg, 0, sizeof(msg));
@@ -866,51 +894,40 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID)
     return strdup(metafile_directory);
 }
 
+/* ------------------------------------------------------------------------
+   Seeder -> Leecher FUNCTIONS
+------------------------------------------------------------------------ */
 
-
+/* ------------------------------------------------------------------------
+   Main Function - Always Last
+------------------------------------------------------------------------ */
+static PeerContext *peer_ctx;
 
 void peer_fsm_handler(){
     switch (peer_ctx->current_state)
     {
     case Peer_FSM_INIT:
-        peer_init();
-        peer_ctx->current_state = Peer_FSM_CONNECTING_TO_TRACKER;
+        // Initialize peer
         break;
-
     case Peer_FSM_CONNECTING_TO_TRACKER:
-        if (peer_connecting_to_tracker() == 1) {
-            peer_ctx->current_state = Peer_FSM_ERROR;
-        } else {
-            //success
-            peer_ctx->current_state = Peer_FSM_TRACKER_CONNECTED;
-        }
+        // Handle connecting to tracker
         break;
-    case Peer_FSM_TRACKER_CONNECTED:
-        // this function needs to edit
-        tracker_cli_loop(peer_ctx->tracker_fd, PEER_1_IP, PEER_1_PORT);
+    case Peer_FSM_CONNECTED_IDLE:
+        // Handle idle state
         break;
-
     case Peer_FSM_LISTENING_PEER:
-        if (peer_listening_peer() == 1) {
-            peer_ctx->current_state = Peer_FSM_ERROR;
-        } else {
-            peer_ctx->current_state = Peer_FSM_SEEDING;
-        }
+        // Listen for peer connections
         break;
-
     case Peer_FSM_SEEDING:
         // Handle seeding operations
-        if (peer_seeding() == 1) {
-            peer_ctx->current_state = Peer_FSM_ERROR;
-        } else {
-        peer_ctx->current_state = Peer_FSM_LISTENING_PEER;
-        }
         break;
-
     case Peer_FSM_LEECHING:
-        // ignore first
+        // Handle leeching operations
         break;
- 
+    case PEER_FSM_HANDLE_EVENT: {
+        // Handle specific events
+        break;
+    }
     case Peer_FSM_ERROR:
         // Handle error state
         break;
@@ -926,97 +943,92 @@ void peer_fsm_handler(){
     }
 }
 
-
-void peer_init(){
-    peer_ctx = malloc(sizeof(PeerContext));
-    if (peer_ctx != NULL) {
-        memset(peer_ctx, 0, sizeof(PeerContext));
-    } else {
-        fprintf(stderr, "Error: Failed to allocate memory for peer_ctx\n");
-    }
-}
-
-int peer_connecting_to_tracker(){
-    int tracker_fd = connect_to_tracker();
-    if (tracker_fd < 0)
+void peer_event_handler(PeerFSMEventHandler event) {
+    switch (event)
     {
-        printf("\nConnection to tracker failed. Please restart program\n");
-        return 1;
+    case FSM_EVENT_EXIT_CLI:
+        // Handle exit CLI event
+        peer_ctx->current_state = Peer_FSM_CLOSING;
+        break;
+        
+    case FSM_EVENT_CREATE_SEEDER:
+        // Handle create seeder event
+        printf("Creating seeder...\n");
+        // Implementation for creating a seeder
+        peer_ctx->current_state = Peer_FSM_CONNECTED_IDLE;
+        break;
+        
+    case FSM_EVENT_GET_ALL_AVAILABLE_FILES:
+        // Handle get all available files event
+        printf("Requesting all available files...\n");
+        // Implementation for getting all available files
+        peer_ctx->current_state = Peer_FSM_CONNECTED_IDLE;
+        break;
+        
+    case FSM_EVENT_CREATE_NEW_SEED:
+        // Handle create new seed event
+        printf("Creating new seed...\n");
+        // Implementation for creating a new seed
+        peer_ctx->current_state = Peer_FSM_SEEDING;
+        break;
+        
+    case FSM_EVENT_LEECH_FILE_BY_FILEID:
+        // Handle leech file by file ID event
+        printf("Starting to leech file...\n");
+        // Implementation for leeching a file
+        peer_ctx->current_state = Peer_FSM_LEECHING;
+        break;
+        
+    case FSM_EVENT_PARTICIPATE_SEED_BY_FILEID:
+        // Handle participate seed by file ID event
+        printf("Participating in seeding...\n");
+        // Implementation for participating in seeding
+        peer_ctx->current_state = Peer_FSM_SEEDING;
+        break;
+        
+    case FSM_EVENT_DISCONNECT_FROM_TRACKER:
+        // Handle disconnect from tracker event
+        printf("Disconnecting from tracker...\n");
+        // Implementation for disconnecting from tracker
+        peer_ctx->current_state = Peer_FSM_CLOSING;
+        break;
+        
+    case FSM_EVENT_LISTENING_PEER:
+        // Handle listening peer event
+        printf("Listening for peer connections...\n");
+        // Implementation for listening for peer connections
+        peer_ctx->current_state = Peer_FSM_LISTENING_PEER;
+        break;
+        
+    case FSM_EVENT_HANDLE_PEER_CONNECTION:
+        // Handle peer connection event
+        printf("Handling peer connection...\n");
+        // Implementation for handling peer connection
+        // State depends on whether we're seeding or leeching
+        break;
+        
+    default:
+        fprintf(stderr, "⚠️ Unknown peer FSM event: %d\n", event);
+        peer_ctx->current_state = Peer_FSM_ERROR;
+        break;
     }
-    return 0;
 }
 
-int peer_listening_peer(){
-    int listen_fd = setup_seeder_socket(atoi(PEER_1_PORT));
-    if (listen_fd < 0)
-    {
-        printf("Failed to connect to peer");
-        return 1;
-    }
-
-    peer_ctx->leecher_fd = listen_fd;
-    return 0;
-}
-
-int peer_seeding(){
-    
-    int return_status = handle_peer_connection(peer_ctx->leecher_fd);
-    
-    if (return_status == 1) {
-        // error
-        printf("Error handling peer connection");
-        return 1;
-    }
-    
-    if (return_status == 2) {
-        // abrupt connection or graceful termination
-        printf("Disconnection from peer");
-        return 0;
-    }
-
-    return 0;
-}
-
-
-void peer_closing(){
-    if (peer_ctx->leecher_fd >= 0) {
-        close(peer_ctx->leecher_fd);
-        peer_ctx->leecher_fd = -1;
-    }
-    
-    if (peer_ctx->tracker_fd >= 0) {
-        close(peer_ctx->tracker_fd);
-        peer_ctx->tracker_fd = -1;
-    }
-}
-
-void peer_cleanup(){
-    // Cleanup resources
-}
 
 int main()
 {
-    // Initialize peer context
-    peer_ctx = malloc(sizeof(PeerContext));
-    if (!peer_ctx) {
-        fprintf(stderr, "Failed to allocate memory for peer context\n");
+
+    PeerContext->tracker_fd = connect_to_tracker();
+
+    if (tracker_fd < 0)
+    {
+        printf("Connection to tracker failed. Please restart program");
         return 1;
     }
-    
-    memset(peer_ctx, 0, sizeof(PeerContext));
-    peer_ctx->current_state = Peer_FSM_INIT;
-    
-    peer_fsm_handler();
-    
-    while (peer_ctx->current_state != Peer_FSM_CLOSING) {
-        peer_fsm_handler();
-    }
 
-    if (peer_ctx->current_state == Peer_FSM_CLOSING) {
-        peer_closing();
-    }
-    
-    // Free memory
-    free(peer_ctx);
+    // 3) Show CLI to user: (Register seeds, list files, etc.)
+    tracker_cli_loop(tracker_fd, PEER_1_IP, PEER_1_PORT);
+    disconnect_from_tracker(tracker_fd);
+
     return 0;
 }

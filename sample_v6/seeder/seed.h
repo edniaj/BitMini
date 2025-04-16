@@ -9,6 +9,10 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <regex.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
 #include <dirent.h>
 #include "peerCommunication.h"
 #include "meta.h"
@@ -17,8 +21,8 @@
 #define STORAGE_DIR "./storage_downloads/"
 
 int setup_seeder_socket(int port);
-void handle_peer_request(int client_socketfd);
-void handle_peer_connection(int listen_fd);
+int handle_peer_request(int client_socketfd);
+int handle_peer_connection(int listen_fd);
 int send_chunk(int sockfd, FILE *data_file_fp, ssize_t fileID, ssize_t chunkIndex);
 
 char *find_binary_file_path(ssize_t fileID);
