@@ -33,8 +33,10 @@ int setup_seeder_socket(int port)
     printf("Seeder listening on port %d for peer connections...\n", port);
     return listen_socketfd;
 }
-void handle_peer_connection(int listen_fd)
+int handle_peer_connection(int listen_fd)
 {
+
+    int return_status;
     while (1)
     {
         struct sockaddr_in peer_addr;
@@ -46,31 +48,29 @@ void handle_peer_connection(int listen_fd)
             continue;
         }
         printf("New peer connected.\n");
-        handle_peer_request(peer_fd);
-        // Serve chunk requests
-        // handle_peer_request(peer_fd);
-        // closed in handle_peer_request()
-    }
 
-    // Cleanup if ever reached
-    close(listen_fd);
+        return_status = handle_peer_request(peer_fd);
+    }
+    
+    return return_status;
+
 }
 
 char *find_binary_file_path(ssize_t fileID)
 {
-    // Convert fileID into a 4-digit prefix
+    // 1) Convert fileID to a 4-digit prefix
     char prefix[16];
     snprintf(prefix, sizeof(prefix), "%04zd", fileID);
 
-    // Create a regex that matches any filename beginning with that prefix
-    // (e.g., "^0036" for fileID=36)
+    // Build a regex that matches filenames starting with "<prefix>_", ending with ".meta"
+    // e.g. "^0001_.*\\.meta$"
     regex_t regex;
     char pattern[64];
-    snprintf(pattern, sizeof(pattern), "^%s", prefix);
+    snprintf(pattern, sizeof(pattern), "^%s_.*\\.meta$", prefix);
 
     if (regcomp(&regex, pattern, REG_EXTENDED) != 0)
     {
-        fprintf(stderr, "Failed to compile regex pattern\n");
+        fprintf(stderr, "Failed to compile regex pattern: %s\n", pattern);
         return NULL;
     }
 
@@ -82,56 +82,87 @@ char *find_binary_file_path(ssize_t fileID)
         return NULL;
     }
 
-    char *binary_path = NULL;
     struct dirent *entry;
+    char *binary_path = NULL;
 
-    // Read each entry in STORAGE_DIR
+    // 2) Scan through STORAGE_DIR for a matching meta file
     while ((entry = readdir(dir)) != NULL)
     {
-        // Skip subdirectories
+        // Skip if it’s a subdirectory
         if (entry->d_type == DT_DIR)
-        {
             continue;
-        }
 
-        // Check if it starts with the desired prefix
+        // Check if filename matches our pattern "<prefix>_.*.meta"
         if (regexec(&regex, entry->d_name, 0, NULL, 0) == 0)
         {
-            size_t name_len = strlen(entry->d_name);
+            // Example: "0001_meow.pdf.meta"
+            const char *fname    = entry->d_name;
+            size_t fname_len     = strlen(fname);
+            size_t prefix_len    = strlen(prefix);
+            size_t suffix_len    = 5; // ".meta" length
 
-            // Skip if ends with ".meta"
-            if (name_len > 5 &&
-                strcmp(entry->d_name + (name_len - 5), ".meta") == 0)
-            {
+            // Must have at least: "<prefix>_x.meta" => prefix_len + 1 + suffix_len
+            if (fname_len <= prefix_len + 1 + suffix_len)
                 continue;
-            }
 
-            // Skip if ends with ".bitfield"
-            if (name_len > 9 &&
-                strcmp(entry->d_name + (name_len - 9), ".bitfield") == 0)
+            // 2a) Extract body => everything after "<prefix>_" and before ".meta"
+            size_t body_len = fname_len - (prefix_len + 1) - suffix_len;
+
+            char *body = (char *)malloc(body_len + 1);
+            if (!body)
             {
-                continue;
+                fprintf(stderr, "Out of memory while extracting body\n");
+                break; // will return NULL
             }
+            strncpy(body, fname + prefix_len + 1, body_len);
+            body[body_len] = '\0';
 
-            // Otherwise, treat it as the binary file
-            size_t fullpath_len = strlen(STORAGE_DIR) + name_len + 1;
-            binary_path = (char *)malloc(fullpath_len);
+            // 3) Construct "body" only (no prefix in binary filename)
+            size_t bin_fname_len = body_len;
+            char *bin_fname = (char *)malloc(bin_fname_len + 1);
+            if (!bin_fname)
+            {
+                fprintf(stderr, "Out of memory while building binary filename\n");
+                free(body);
+                break;
+            }
+            snprintf(bin_fname, bin_fname_len + 1, "%s", body);
+
+            free(body);
+
+            // 4) Build full path => STORAGE_DIR + "<prefix>_body"
+            size_t fullpath_len = strlen(STORAGE_DIR) + bin_fname_len;
+            binary_path = (char *)malloc(fullpath_len + 1);
             if (!binary_path)
             {
-                fprintf(stderr, "Out of memory allocating path\n");
-                break; // will return NULL below
+                fprintf(stderr, "Out of memory while constructing full path\n");
+                free(bin_fname);
+                break; // will return NULL
             }
-            snprintf(binary_path, fullpath_len, "%s%s", STORAGE_DIR, entry->d_name);
-            break; // We found it; no need to keep looking
+            snprintf(binary_path, fullpath_len + 1, "%s%s", STORAGE_DIR, bin_fname);
+            printf("binary_path: %s\n",binary_path);
+            free(bin_fname);
+
+            // Check if that file exists and is a regular file
+            struct stat st;
+            if (stat(binary_path, &st) == 0 && S_ISREG(st.st_mode))
+            {
+                // Found it! We'll break out and return binary_path
+                break; 
+            }
+            else
+            {
+                // Not found => release memory and keep searching
+                free(binary_path);
+                binary_path = NULL;
+            }
         }
     }
 
     closedir(dir);
     regfree(&regex);
 
-    // binary_path will be NULL if nothing matched,
-    // or a heap-allocated string containing the full path if we found it.
-    printf("binary_path: %s\n", binary_path);
+    // Will be NULL if none found
     return binary_path;
 }
 char *find_bitfield_file_path(ssize_t fileID)
@@ -316,7 +347,7 @@ int send_bitfield(int sockfd, uint8_t *bitfield, size_t size)
     return 0;
 }
 
-void handle_peer_request(int client_socketfd)
+int handle_peer_request(int client_socketfd)
 {
     printf("\n🔄 Starting to handle peer requests on socket %d\n", client_socketfd);
 
@@ -336,7 +367,7 @@ void handle_peer_request(int client_socketfd)
         if (nbytes <= 0)
         {
             perror("ERROR reading message header from peer");
-            break;
+            return 1;
         }
         printf("✅ Received message header - Type: %d, Body size: %zu\n", header.type, header.bodySize);
 

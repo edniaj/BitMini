@@ -117,9 +117,9 @@ int request_chunk(int sockfd, ssize_t fileID, ssize_t chunkIndex, TransferChunk 
         return -1;
     }
 
-    if (responseHeader.type != MSG_ACK_SEND_CHUNK)
+    if (responseHeader.type != MSG_ACK_REQUEST_CHUNK)
     {
-        fprintf(stderr, "Expected MSG_ACK_SEND_CHUNK, got %d\n", responseHeader.type);
+        fprintf(stderr, "Expected MSG_ACK_REQUEST_CHUNK, got %d\n", responseHeader.type);
         return -1;
     }
     /* Write the body */
@@ -175,6 +175,75 @@ static int connect_to_seeder(PeerInfo *seeder)
     printf("✅ Seeder successfully connected to Tracker at %s:%s\n",
            seeder->ip_address, seeder->port);
     return sockfd;
+}
+
+int write_chunk_to_file(const char *binary_filepath, const TransferChunk *chunk)
+{
+    FILE *fp = fopen(binary_filepath, "r+b"); // Open for reading and writing
+    if (!fp)
+    {
+        perror("ERROR opening binary file for chunk writing");
+        return -1;
+    }
+
+    // Seek to correct position based on chunk index
+    if (fseek(fp, chunk->chunkIndex * CHUNK_DATA_SIZE, SEEK_SET) != 0)
+    {
+        perror("ERROR seeking in binary file");
+        fclose(fp);
+        return -1;
+    }
+
+    // Write chunk data
+    size_t written = fwrite(chunk->chunkData, 1, chunk->totalByte, fp);
+    if (written != chunk->totalByte)
+    {
+        perror("ERROR writing chunk data");
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+int update_bitfield(const char *bitfield_filepath, ssize_t chunkIndex)
+{
+    FILE *fp = fopen(bitfield_filepath, "r+b"); // Open for reading and writing
+    if (!fp)
+    {
+        perror("ERROR opening bitfield file");
+        return -1;
+    }
+
+    // Calculate byte offset and bit position
+    size_t byte_offset = chunkIndex / 8;
+    uint8_t bit_position = 7 - (chunkIndex % 8); // Assuming MSB first
+
+    // Read current byte
+    uint8_t current_byte;
+    if (fseek(fp, byte_offset, SEEK_SET) != 0 ||
+        fread(&current_byte, 1, 1, fp) != 1)
+    {
+        perror("ERROR reading bitfield");
+        fclose(fp);
+        return -1;
+    }
+
+    // Set the bit
+    current_byte |= (1 << bit_position);
+
+    // Write back the modified byte
+    if (fseek(fp, byte_offset, SEEK_SET) != 0 ||
+        fwrite(&current_byte, 1, 1, fp) != 1)
+    {
+        perror("ERROR writing bitfield");
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    return 0;
 }
 
 void print_bitfield(const uint8_t *bitfield, size_t bitfield_size, const char *label)
@@ -242,8 +311,12 @@ void leech_from_seeder(PeerInfo seeder, char *bitfield_filepath, char *binary_fi
     uint8_t *seeder_bitfield = request_bitfield(seeder_fd, fileID);
     print_bitfield(seeder_bitfield, bitfield_size, " Seeder's bitfield");
     // Loop through each chunk index
+
+    TransferChunk *outChunk = malloc(sizeof(TransferChunk));
+
     for (ssize_t chunkIndex = 0; chunkIndex < totalChunk; chunkIndex++)
     {
+        memset(outChunk, 0, sizeof(TransferChunk));
 
         if (!seeder_bitfield)
         {
@@ -260,26 +333,27 @@ void leech_from_seeder(PeerInfo seeder, char *bitfield_filepath, char *binary_fi
             printf("📥 Requesting chunk %zd from seeder\n", chunkIndex);
 
             // Request the chunk from the seeder
-            int i = request_chunk(seeder_fd, fileID, chunkIndex, NULL);
-            // if (chunk)
-            // {
-            //     printf("✅ Received chunk %zd (%zu bytes)\n", chunkIndex, chunk->totalByte);
-
-            //     // Write the chunk data to our local file
-            //     if (write_chunk_to_file(binary_filepath, chunk))
-            //     {
-            //         fprintf(stderr, "❌ Failed to write chunk %zd to file\n", chunkIndex);
-            //     }
-            //     else
-            //     {
-            //         // Update our local bitfield to mark that we now have this chunk
-            //         set_chunk(local_bitfield, chunkIndex);
-
-            //         printf("🧩 Progress: %d/%ld chunks (%d%%)\n",
-            //                chunkIndex + 1, totalChunk,
-            //                ((chunkIndex + 1) * 100) / totalChunk);
-            //     }
-            //     free(chunk);
+            int result = request_chunk(seeder_fd, fileID, chunkIndex, outChunk);
+            if (result == 0)
+            {
+                // Write chunk to file
+                if (write_chunk_to_file(binary_filepath, outChunk) == 0)
+                {
+                    // Update bitfield
+                    if (update_bitfield(bitfield_filepath, chunkIndex) == 0)
+                    {
+                        printf("✅ Successfully wrote chunk %zd and updated bitfield\n", chunkIndex);
+                    }
+                    else
+                    {
+                        fprintf(stderr, "❌ Failed to update bitfield for chunk %zd\n", chunkIndex);
+                    }
+                }
+                else
+                {
+                    fprintf(stderr, "❌ Failed to write chunk %zd to file\n", chunkIndex);
+                }
+            }
         }
         else
         {

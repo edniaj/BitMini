@@ -33,7 +33,7 @@ int setup_seeder_socket(int port)
     printf("Seeder listening on port %d for peer connections...\n", port);
     return listen_socketfd;
 }
-void handle_peer_connection(int listen_fd)
+int handle_peer_connection(int listen_fd)
 {
     while (1)
     {
@@ -43,17 +43,21 @@ void handle_peer_connection(int listen_fd)
         if (peer_fd < 0)
         {
             perror("ERROR accepting peer");
-            continue;
+            return 1;
         }
         printf("New peer connected.\n");
-        handle_peer_request(peer_fd);
-        // Serve chunk requests
-        // handle_peer_request(peer_fd);
-        // closed in handle_peer_request()
+
+        // handle peer is supposed to be a while loop
+        // if it returns 2, then we should break and listen for new peers
+        // if it returns 1, then we should return 1 and stop the loop
+        int return_status = handle_peer_request(peer_fd);
+        
+        return return_status;
+
+        // disconnection from peers should return 2 
     }
 
-    // Cleanup if ever reached
-    close(listen_fd);
+    return 0;
 }
 
 char *find_binary_file_path(ssize_t fileID)
@@ -219,7 +223,8 @@ int send_chunk(int sockfd, FILE *data_file_fp, struct FileMetaData *fileMetaData
 
 int send_bitfield(int sockfd, uint8_t *bitfield, size_t size);
 
-void handle_peer_request(int client_socketfd)
+// For interacting with other peers
+int handle_peer_request(int client_socketfd)
 {
     printf("\n🔄 Starting to handle peer requests on socket %d\n", client_socketfd);
     
@@ -233,8 +238,19 @@ void handle_peer_request(int client_socketfd)
         
         ssize_t nbytes = read(client_socketfd, &header, sizeof(PeerMessageHeader));
         if (nbytes <= 0) {
+            
+            if (errno == ECONNRESET) {
+                printf("Detected ECONNRESET: Peer disconnected abruptly.\n");
+                return 2;
+            }
+
             perror("ERROR reading message header from peer");
-            break;
+            return 1;
+        }
+
+        if (nbytes == 0) {
+            printf("abrupt disconnection from peer");
+            return 2;
         }
         printf("✅ Received message header - Type: %d, Body size: %zu\n", header.type, header.bodySize);
 
@@ -247,10 +263,21 @@ void handle_peer_request(int client_socketfd)
         
         nbytes = read(client_socketfd, body_buffer, header.bodySize);
         if (nbytes <= 0) {
+            
+            if (errno == ECONNRESET) {
+                printf("Detected ECONNRESET: Peer disconnected abruptly.\n");
+                return 2;
+            }
             free(body_buffer);
             perror("ERROR reading message body from peer");
-            break;
+            return 1;
         }
+        
+        if (nbytes == 0) {
+            printf("abrupt disconnection from peer");
+            return 2;
+        }
+
         printf("✅ Received message body of %zd bytes\n", nbytes);
 
         // 3. Handle different message types
