@@ -29,7 +29,7 @@ typedef enum {
     SUBJECT_CONTENT
 } SubjectType;
 
-// Source
+// Sources
 typedef enum {
     SOURCE_IP,
     SOURCE_REGION
@@ -41,7 +41,7 @@ typedef enum {
     COMP_NONE
 } ComparatorType;
 
-// AST Struct
+// AST Node Struct
 typedef struct ASTNode {
     ASTNodeType type;
     union {
@@ -50,19 +50,19 @@ typedef struct ASTNode {
         SourceDestType source_dest;
         ComparatorType comparator;
     } subtype;
-    char* value; // PARAMETERS (e.g., filename), SOURCE/DESTINATION (e.g., IP, region)
-    TrackerMessageType messageType; //message from tracker here
-    void (*function)(int, void*); // Function pointer for execution
-    struct ASTNode* left;  // Child 
-    struct ASTNode* right; // Child 
-    struct ASTNode* next;  // Sibling 
+    char* value;
+    TrackerMessageType messageType;
+    void (*function)(int, void*);
+    struct ASTNode* left;
+    struct ASTNode* right;
+    struct ASTNode* next;
 } ASTNode;
 
-// Function prototypes
+// Functions
 ASTNode* create_node(ASTNodeType type, int subtype, const char* value, TrackerMessageType msgType);
 void free_ast(ASTNode* node);
 ASTNode* parse_command(const char* command);
 ASTNode* parse_message(TrackerMessage* message);
 void execute_ast(ASTNode* node, int client_socket, void* context);
 
-#endif // PARSER_H
+#endif

@@ -255,34 +255,19 @@ void execute_ast(ASTNode* node, int client_socket, void* context) {
     if (node->type == AST_ACTION) {
         switch (node->subtype.action) {
             case ACTION_BLOCK: {
-                // Find SUBJECT
                 ASTNode* subject = node->left;
-                if (!subject || subject->type != AST_SUBJECT) return;
-                
-                // Get filename or connection details
                 ASTNode* param = subject->left;
-                if (!param || param->type != AST_PARAMETERS) return;
-                
-                // Get SOURCE and DESTINATION
                 ASTNode* source = node->right;
-                if (!source || source->type != AST_SOURCE) return;
-                
                 ASTNode* dest = source->next;
-                if (!dest || dest->type != AST_DESTINATION) return;
-                
-                ASTNode* comp = dest->next;
-                
-                printf("Executing BLOCK: %s %s from %s (%s) to %s (%s)\n",
-                       subject->subtype.subject == SUBJECT_FILE ? "FILENAME" : "CONNECTION",
-                       param->value,
-                       source->subtype.source_dest == SOURCE_IP ? "IP" : "REGION",
-                       source->value,
-                       dest->subtype.source_dest == SOURCE_IP ? "IP" : "REGION",
-                       dest->value);
-                
-                // TODO: Implement tracker integration
+            
+                TrackerMessage msg;
+                msg.header.type = MSG_REQUEST_BLOCK; 
+                msg.header.bodySize = strlen(param->value) + strlen(source->value) + strlen(dest->value) + 3;
+                snprintf(msg.body.raw, sizeof(msg.body.raw), "%s|%s|%s", param->value, source->value, dest->value);
+                write(client_socket, &msg, sizeof(msg.header) + msg.header.bodySize);
                 break;
             }
+                
             case ACTION_ALLOW:
             case ACTION_REGISTER:
                 if (node->function) {

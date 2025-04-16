@@ -30,7 +30,7 @@ void list_file_entries();
 char *get_meta_filename(ssize_t fileID);
 
 /* Function to load all file entries into a dynamically allocated array */
-FileEntry *load_file_entries();
+FileEntry *load_file_entries(size_t *outcount);
 
 /* Function to scan the `records/` folder and add all .meta files */
 void scan_and_add_files();
