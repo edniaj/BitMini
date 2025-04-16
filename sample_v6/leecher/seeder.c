@@ -190,7 +190,6 @@ static int connect_to_tracker()
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(TRACKER_PORT);
 
-    // Convert IP string to binary form
     if (inet_pton(AF_INET, TRACKER_IP, &serv_addr.sin_addr) <= 0)
     {
         perror("ERROR invalid tracker IP");
@@ -548,7 +547,7 @@ static void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             ssize_t *selectedFileID = malloc(sizeof(ssize_t));
             char *metaFilePath = get_metadata_via_cli(tracker_socket, selectedFileID);
             char *binary_filepath;
-            if (!metaFilePath)
+            if (metaFilePath == NULL)
             {
                 free(selectedFileID);
                 break;

@@ -8,5 +8,6 @@
         "leech.h": "c",
         "stdlib.h": "c",
         "database.h": "c"
-    }
+    },
+    "C_Cpp.errorSquiggles": "disabled"
 }
