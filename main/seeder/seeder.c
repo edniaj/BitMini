@@ -5,18 +5,16 @@
 #include <errno.h>
 #include <arpa/inet.h> // for inet_pton(), sockadd_in, etc.
 
-#include "seeder.h"    // Include our own header first to ensure types are defined
-#include "meta.h"      // FileMetadata struct, etc.
+#include "seeder.h" // Include our own header first to ensure types are defined
+#include "meta.h"   // FileMetadata struct, etc.
 
 #include "database.h"
 #include "bitfield.h"
 #include "leech.h"
 #include "seed.h"
 
-#include "parser.h"
 
 #include "peerCommunication.h"
-
 
 #define STORAGE_DIR "./storage_downloads/"
 #define CHUNK_DATA_SIZE 1024
@@ -29,9 +27,9 @@
 
 PeerContext *peer_ctx;
 
-
 /* Helper/Utility Functions */
-void request_metadata_by_filename(int tracker_socket, const char *metaFilename, FileMetadata *fileMetaData) {
+void request_metadata_by_filename(int tracker_socket, const char *metaFilename, FileMetadata *fileMetaData)
+{
     TrackerMessage msg;
     memset(&msg, 0, sizeof(msg));
     msg.header.type = MSG_REQUEST_META_DATA;
@@ -44,18 +42,21 @@ void request_metadata_by_filename(int tracker_socket, const char *metaFilename, 
 
     TrackerMessageHeader respHeader;
     ssize_t n = read(tracker_socket, &respHeader, sizeof(respHeader));
-    if (n <= 0) {
+    if (n <= 0)
+    {
         perror("Error reading metadata response header");
         return;
     }
 
-    if (respHeader.type != MSG_REQUEST_META_DATA || respHeader.bodySize != sizeof(FileMetadata)) {
+    if (respHeader.type != MSG_REQUEST_META_DATA || respHeader.bodySize != sizeof(FileMetadata))
+    {
         fprintf(stderr, "Unexpected response from tracker.\n");
         return;
     }
 
     n = read(tracker_socket, fileMetaData, sizeof(FileMetadata));
-    if (n != sizeof(FileMetadata)) {
+    if (n != sizeof(FileMetadata))
+    {
         perror("Error reading metadata body");
         return;
     }
@@ -71,28 +72,31 @@ void request_metadata_by_filename(int tracker_socket, const char *metaFilename, 
     printf("\n");
 }
 
-char *generate_binary_filepath(char *metaFilePath) {
+char *generate_binary_filepath(char *metaFilePath)
+{
     size_t metaPathLen = strlen(metaFilePath);
     char *binaryFilePath = malloc(metaPathLen + 1);
 
-    if (binaryFilePath) {
+    if (binaryFilePath)
+    {
         strcpy(binaryFilePath, metaFilePath);
 
         char *extension = strstr(binaryFilePath, ".meta");
-        if (extension) {
+        if (extension)
+        {
             *extension = '\0';
             printf("\nbinaryFilePath: %s\n", binaryFilePath);
             return binaryFilePath;
-        } else {
+        }
+        else
+        {
             fprintf(stderr, "Error: Metadata file doesn't have expected .meta extension\n");
             free(binaryFilePath);
             return NULL;
         }
     }
     return NULL;
-
-
-} 
+}
 /* ------------------------------------------------------------------------
     Tracker Communication Functions
  ------------------------------------------------------------------------ */
@@ -102,7 +106,8 @@ int connect_to_tracker()
     printf("Connecting to Tracker at %s:%d...\n", TRACKER_IP, TRACKER_PORT);
 
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
+    if (sockfd < 0)
+    {
         perror("ERROR opening socket to tracker");
         return -1;
     }
@@ -112,19 +117,21 @@ int connect_to_tracker()
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(TRACKER_PORT);
 
-    if (inet_pton(AF_INET, TRACKER_IP, &serv_addr.sin_addr) <= 0) {
+    if (inet_pton(AF_INET, TRACKER_IP, &serv_addr.sin_addr) <= 0)
+    {
         perror("ERROR invalid tracker IP");
         close(sockfd);
         return -1;
     }
 
-    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
         perror("ERROR connecting to tracker");
         printf("❌ Connection to Tracker failed. Is it running at %s:%d?\n", TRACKER_IP, TRACKER_PORT);
         close(sockfd);
         return -1;
     }
-    
+
     printf("✅ Seeder successfully connected to Tracker at %s:%d\n", TRACKER_IP, TRACKER_PORT);
     peer_ctx->tracker_fd = sockfd;
     peer_ctx->current_state = Peer_FSM_TRACKER_CONNECTED;
@@ -135,7 +142,7 @@ void disconnect_from_tracker(int tracker_socket)
 {
     close(tracker_socket);
     printf("✅ Seeder successfully disconnected from Tracker\n");
-
+}
 /******************************************************************************
 SEEDER -> TRACKER FUNCTIONS
  ******************************************************************************/
@@ -155,37 +162,43 @@ void request_create_new_seed(int tracker_socket, const char *binary_file_path)
     msg.body.fileMetadata = fileMeta;
 
     ssize_t bytes_written = write(tracker_socket, &msg.header, sizeof(msg.header));
-    if (bytes_written != sizeof(msg.header)) {
+    if (bytes_written != sizeof(msg.header))
+    {
         fprintf(stderr, "Failed to send message header\n");
         return;
     }
 
     bytes_written = write(tracker_socket, &msg.body.fileMetadata, msg.header.bodySize);
-    if (bytes_written != msg.header.bodySize) {
+    if (bytes_written != msg.header.bodySize)
+    {
         fprintf(stderr, "Failed to send message body\n");
         return;
     }
 
     TrackerMessageHeader ack_header;
     ssize_t bytes_read = read(tracker_socket, &ack_header, sizeof(ack_header));
-    if (bytes_read != sizeof(ack_header)) {
+    if (bytes_read != sizeof(ack_header))
+    {
         fprintf(stderr, "Failed to read ACK header\n");
         return;
     }
 
-    if (ack_header.type != MSG_ACK_CREATE_NEW_SEED) {
+    if (ack_header.type != MSG_ACK_CREATE_NEW_SEED)
+    {
         fprintf(stderr, "Did not receive MSG_ACK_CREATE_NEW_SEED.\n");
         return;
     }
 
-    if (ack_header.bodySize != sizeof(ssize_t)) {
+    if (ack_header.bodySize != sizeof(ssize_t))
+    {
         fprintf(stderr, "ACK bodySize mismatch.\n");
         return;
     }
 
     ssize_t newFileID;
     bytes_read = read(tracker_socket, &newFileID, sizeof(newFileID));
-    if (bytes_read != sizeof(newFileID)) {
+    if (bytes_read != sizeof(newFileID))
+    {
         fprintf(stderr, "Failed to read file ID\n");
         return;
     }
@@ -193,14 +206,16 @@ void request_create_new_seed(int tracker_socket, const char *binary_file_path)
     printf("Tracker assigned fileID: %zd\n", newFileID);
 
     char *metaPath = generate_metafile_filepath_with_id(newFileID, binary_file_path);
-    if (!metaPath) {
+    if (!metaPath)
+    {
         fprintf(stderr, "Failed to generate .meta path.\n");
         return;
     }
 
     fileMeta.fileID = newFileID;
 
-    if (write_metadata(metaPath, &fileMeta) != 0) {
+    if (write_metadata(metaPath, &fileMeta) != 0)
+    {
         fprintf(stderr, "Failed to write metadata: %s\n", metaPath);
         free(metaPath);
         return;
@@ -209,7 +224,8 @@ void request_create_new_seed(int tracker_socket, const char *binary_file_path)
     printf("Wrote metadata file: %s\n", metaPath);
 
     char *bitfieldPath = generate_bitfield_filepath_with_id(newFileID, binary_file_path);
-    if (!bitfieldPath) {
+    if (!bitfieldPath)
+    {
         fprintf(stderr, "Failed to generate .bitfield path.\n");
         free(metaPath);
         return;
@@ -231,50 +247,68 @@ PeerInfo *request_seeder_by_fileID(int tracker_socket, ssize_t fileID, size_t *n
     msg.header.bodySize = sizeof(ssize_t);
     msg.body.fileID = fileID;
 
-    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0) {
+    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
+    {
         perror("ERROR writing header (REQUEST_SEEDER_BY_FILEID)");
         return NULL;
     }
-    if (write(tracker_socket, &msg.body.fileID, msg.header.bodySize) < 0) {
+    if (write(tracker_socket, &msg.body.fileID, msg.header.bodySize) < 0)
+    {
         perror("ERROR writing fileID body");
         return NULL;
     }
 
     TrackerMessageHeader ack_header;
-    if (read(tracker_socket, &ack_header, sizeof(ack_header)) <= 0) {
+    if (read(tracker_socket, &ack_header, sizeof(ack_header)) <= 0)
+    {
         perror("ERROR reading ack header (REQUEST_SEEDER_BY_FILEID)");
         return NULL;
     }
 
-    if (ack_header.type != MSG_ACK_SEEDER_BY_FILEID) {
+    if (ack_header.type == MSG_ACK_FILEHASH_BLOCKED) {
+        printf("Tracker refused to allow seeding of this file. \nIt is in the blocked list.\n");
+        return NULL;
+    }
+    else if (ack_header.type == MSG_ACK_IP_BLOCKED) {
+        printf("Your IP is blocked. Tracker refused your ip\n");
+        return NULL;
+    }
+
+    if (ack_header.type != MSG_ACK_SEEDER_BY_FILEID)
+    {
         fprintf(stderr, "Expected MSG_ACK_SEEDER_BY_FILEID, got %d\n", ack_header.type);
         return NULL;
     }
 
-    if (ack_header.bodySize == 0) {
+    if (ack_header.bodySize == 0)
+    {
         printf("No seeders for fileID=%zd.\n", fileID);
         return NULL;
     }
 
     size_t num_seeders = ack_header.bodySize / sizeof(PeerInfo);
     PeerInfo *seederList = calloc(num_seeders, sizeof(PeerInfo));
-    if (!seederList) {
+    if (!seederList)
+    {
         perror("calloc failed");
         return NULL;
     }
 
-    if (read(tracker_socket, seederList, ack_header.bodySize) < 0) {
+    if (read(tracker_socket, seederList, ack_header.bodySize) < 0)
+    {
         perror("ERROR reading seeder list");
         free(seederList);
         return NULL;
     }
 
     printf("Received %zu seeders for fileID=%zd:\n", num_seeders, fileID);
-    for (size_t i = 0; i < num_seeders; i++) {
+    for (size_t i = 0; i < num_seeders; i++)
+    {
         printf("  -> %s:%s\n", seederList[i].ip_address, seederList[i].port);
     }
 
-    if (num_seeders_out) {
+    if (num_seeders_out)
+    {
         *num_seeders_out = num_seeders;
     }
 
@@ -295,37 +329,54 @@ void request_participate_seed_by_fileID(int tracker_socket, const char *myIP, co
             sizeof(msg.body.peerWithFileID.singleSeeder.port) - 1);
     msg.body.peerWithFileID.fileID = fileID;
 
-    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0) {
+    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
+    {
         perror("ERROR writing header (PARTICIPATE_SEED_BY_FILEID)");
         return;
     }
-    if (write(tracker_socket, &msg.body.peerWithFileID, msg.header.bodySize) < 0) {
+    if (write(tracker_socket, &msg.body.peerWithFileID, msg.header.bodySize) < 0)
+    {
         perror("ERROR writing PeerWithFileID body");
         return;
     }
 
     TrackerMessageHeader ack_header;
-    if (read(tracker_socket, &ack_header, sizeof(ack_header)) <= 0) {
+    if (read(tracker_socket, &ack_header, sizeof(ack_header)) <= 0)
+    {
         perror("ERROR reading ack header (PARTICIPATE_SEED_BY_FILEID)");
         return;
     }
 
-    if (ack_header.type == MSG_ACK_PARTICIPATE_SEED_BY_FILEID) {
+    if (ack_header.type == MSG_ACK_PARTICIPATE_SEED_BY_FILEID)
+    {
         printf("Successfully registered as a seeder for fileID %zd.\n", fileID);
-        if (ack_header.bodySize > 0) {
+        if (ack_header.bodySize > 0)
+        {
             char buffer[256];
             ssize_t n = read(tracker_socket, buffer, ack_header.bodySize < 256 ? ack_header.bodySize : 255);
-            if (n > 0) {
+            if (n > 0)
+            {
                 buffer[n] = '\0';
                 printf("Tracker says: %s\n", buffer);
             }
         }
-    } else {
+    }
+    else if (ack_header.type == MSG_ACK_FILEHASH_BLOCKED) {
+        printf("Tracker refused to allow seeding of this file. \nIt is in the blocked list.\n");
+    }
+    else if (ack_header.type == MSG_ACK_IP_BLOCKED) {
+        printf("Your IP is blocked. Tracker refused your ip\n");
+    }
+    
+    else
+    {
         fprintf(stderr, "Tracker did not ACK participation. Type=%d\n", ack_header.type);
-        if (ack_header.bodySize > 0) {
+        if (ack_header.bodySize > 0)
+        {
             char buffer[512];
             ssize_t n = read(tracker_socket, buffer, ack_header.bodySize < 512 ? ack_header.bodySize : 512);
-            if (n > 0) {
+            if (n > 0)
+            {
                 buffer[n] = '\0';
                 fprintf(stderr, "Tracker error: %s\n", buffer);
             }
@@ -347,11 +398,13 @@ void request_create_seeder(int tracker_socket, const char *myIP, const char *myP
     strncpy(msg.body.singleSeeder.port, myPort,
             sizeof(msg.body.singleSeeder.port) - 1);
 
-    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0) {
+    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
+    {
         perror("ERROR writing tracker header (CREATE_SEEDER)");
         return;
     }
-    if (write(tracker_socket, &msg.body.singleSeeder, msg.header.bodySize) < 0) {
+    if (write(tracker_socket, &msg.body.singleSeeder, msg.header.bodySize) < 0)
+    {
         perror("ERROR writing tracker body (CREATE_SEEDER)");
         return;
     }
@@ -368,12 +421,14 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
 {
 
     char *input = malloc(250);
-    if (!input) {
+    if (!input)
+    {
         perror("Failed to allocate input buffer");
         return;
     }
 
-    while (1) {
+    while (1)
+    {
         printf("\n--- Tracker CLI Options ---\n");
         printf("1) Register as seeder\n");
         printf("2) Get all available files\n");
@@ -381,11 +436,11 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
         printf("4) Leech file by fileID\n");
         printf("5) Participate seeding by fileID\n");
         printf("6) Start Seeding\n");
-        printf("7) Execute command (e.g., BLOCK FILENAME ...)\n");
         printf("0) Exit Tracker\n");
         printf("Choose an option: ");
 
-        if (!fgets(input, 250, stdin)) {
+        if (!fgets(input, 250, stdin))
+        {
             printf("Error reading input.\n");
             continue;
         }
@@ -394,7 +449,8 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
 
         int choice = atoi(input);
 
-        switch (choice) {
+        switch (choice)
+        {
         case 0:
             printf("Exiting CLI...\n");
             free(input);
@@ -411,7 +467,8 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
 
         case 3:
             printf("Folder directory: ");
-            if (!fgets(input, 250, stdin)) {
+            if (!fgets(input, 250, stdin))
+            {
                 printf("Error reading directory.\n");
                 break;
             }
@@ -419,11 +476,13 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             request_create_new_seed(tracker_socket, input);
             break;
 
-        case 4: {
+        case 4:
+        {
             ssize_t selectedFileID;
             char *metaFilePath = get_metadata_via_cli(tracker_socket, &selectedFileID);
             char *binary_filepath;
-            if (!metaFilePath) {
+            if (!metaFilePath)
+            {
                 break;
             }
             printf("\nmetaFilePath:%s\n", metaFilePath);
@@ -433,10 +492,13 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             char *directory = NULL;
             char *baseName = NULL;
 
-            if (!lastSlash) {
+            if (!lastSlash)
+            {
                 directory = strdup(".");
                 baseName = metaFilePath;
-            } else {
+            }
+            else
+            {
                 *lastSlash = '\0';
                 directory = strdup(metaFilePath);
                 *lastSlash = '/';
@@ -454,18 +516,23 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             free(directory);
 
             char *bitfieldPath = NULL;
-            if (metaFilePath) {
+            if (metaFilePath)
+            {
                 size_t metaPathLen = strlen(metaFilePath);
                 bitfieldPath = malloc(metaPathLen + 4 + 1);
 
-                if (bitfieldPath) {
+                if (bitfieldPath)
+                {
                     strcpy(bitfieldPath, metaFilePath);
                     char *extension = strstr(bitfieldPath, ".meta");
-                    if (extension) {
+                    if (extension)
+                    {
                         strcpy(extension, ".bitfield");
                         create_empty_bitfield(metaFilePath, bitfieldPath);
                         printf("\nbitfieldPath:%s\n", bitfieldPath);
-                    } else {
+                    }
+                    else
+                    {
                         fprintf(stderr, "Error: Metadata file doesn't have expected .meta extension\n");
                         free(bitfieldPath);
                         bitfieldPath = NULL;
@@ -475,41 +542,49 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
 
             binary_filepath = generate_binary_filepath(metaFilePath);
             FileMetadata *fileMetadata = malloc(sizeof(FileMetadata));
-            if (!fileMetadata) {
+            if (!fileMetadata)
+            {
                 perror("Failed to allocate FileMetadata");
                 free(metaFilePath);
-                if (bitfieldPath) free(bitfieldPath);
+                if (bitfieldPath)
+                    free(bitfieldPath);
                 return;
             }
 
             read_metadata(metaFilePath, fileMetadata);
 
             FILE *binary_fp = fopen(binary_filepath, "wb");
-            if (!binary_fp) {
+            if (!binary_fp)
+            {
                 perror("Failed to create binary file");
                 free(fileMetadata);
                 free(metaFilePath);
-                if (bitfieldPath) free(bitfieldPath);
+                if (bitfieldPath)
+                    free(bitfieldPath);
                 free(binary_filepath);
                 return;
             }
 
-            if (fseek(binary_fp, fileMetadata->totalByte - 1, SEEK_SET) != 0) {
+            if (fseek(binary_fp, fileMetadata->totalByte - 1, SEEK_SET) != 0)
+            {
                 perror("Failed to seek in binary file");
                 fclose(binary_fp);
                 free(fileMetadata);
                 free(metaFilePath);
-                if (bitfieldPath) free(bitfieldPath);
+                if (bitfieldPath)
+                    free(bitfieldPath);
                 free(binary_filepath);
                 return;
             }
 
-            if (fwrite("", 1, 1, binary_fp) != 1) {
+            if (fwrite("", 1, 1, binary_fp) != 1)
+            {
                 perror("Failed to write to binary file");
                 fclose(binary_fp);
                 free(fileMetadata);
                 free(metaFilePath);
-                if (bitfieldPath) free(bitfieldPath);
+                if (bitfieldPath)
+                    free(bitfieldPath);
                 free(binary_filepath);
                 return;
             }
@@ -520,11 +595,13 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             size_t num_seeders = 0;
             PeerInfo *seederList = request_seeder_by_fileID(tracker_socket, selectedFileID, &num_seeders);
 
-            if (seederList && num_seeders > 0) {
+            if (seederList && num_seeders > 0)
+            {
                 PeerInfo firstSeeder = seederList[0];
 
                 printf("\nAvailable seeders (%ld total):\n", num_seeders);
-                for (size_t i = 0; i < num_seeders; i++) {
+                for (size_t i = 0; i < num_seeders; i++)
+                {
                     printf("%ld) %s:%s\n", i + 1, seederList[i].ip_address, seederList[i].port);
                 }
 
@@ -536,11 +613,14 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
                 tracker_socket = connect_to_tracker();
                 printf("Reconnected to tracker\n");
                 free(seederList);
-            } else {
+            }
+            else
+            {
                 printf("No seeders available for this file.\n");
             }
 
-            if (bitfieldPath) free(bitfieldPath);
+            if (bitfieldPath)
+                free(bitfieldPath);
             free(fileMetadata);
             free(metaFilePath);
             free(filePath);
@@ -550,7 +630,8 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
 
         case 5:
             printf("\nEnter fileID:\n");
-            if (!fgets(input, 250, stdin)) {
+            if (!fgets(input, 250, stdin))
+            {
                 printf("Error reading fileID\n");
                 break;
             }
@@ -562,13 +643,14 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
         case 6:
             disconnect_from_tracker(tracker_socket);
             int listen_fd = setup_seeder_socket(atoi(PEER_1_PORT));
-            if (listen_fd < 0) {
+            if (listen_fd < 0)
+            {
                 return;
             }
 
-            
             int return_status = handle_peer_connection(listen_fd);
-            if (return_status == 1) {
+            if (return_status == 1)
+            {
                 printf("Error handling peer connection");
                 return;
             }
@@ -577,23 +659,6 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             return;
 
             break;
-
-        case 7:
-            printf("Enter command (e.g., BLOCK FILENAME \"file.jpg\" FROM CHINA TO AMERICA):\n");
-            if (!fgets(input, 250, stdin)) {
-                printf("Error reading command\n");
-                break;
-            }
-            input[strcspn(input, "\n")] = 0;
-            ASTNode *ast = parse_command(input);
-            if (ast) {
-                execute_ast(ast, tracker_socket, NULL);
-                free_ast(ast);
-            } else {
-                printf("Invalid command\n");
-            }
-            break;
-
         default:
             printf("Unknown option.\n");
             break;
@@ -610,30 +675,37 @@ void get_all_available_files(int tracker_socket)
     msg.header.type = MSG_REQUEST_ALL_AVAILABLE_SEED;
     msg.header.bodySize = 0;
 
-    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0) {
+    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
+    {
         perror("ERROR writing header (ALL_AVAILABLE_SEED)");
         return;
     }
 
     size_t fileCount = 0;
     ssize_t rc = read(tracker_socket, &fileCount, sizeof(fileCount));
-    if (rc <= 0) {
+    if (rc <= 0)
+    {
         char textBuf[256];
         memset(textBuf, 0, sizeof(textBuf));
         rc = read(tracker_socket, textBuf, sizeof(textBuf) - 1);
-        if (rc > 0) {
+        if (rc > 0)
+        {
             printf("Tracker says: %s\n", textBuf);
-        } else {
+        }
+        else
+        {
             perror("ERROR reading from tracker (ALL_AVAILABLE_SEED)");
         }
         return;
     }
 
     printf("Tracker says there are %zu files.\n", fileCount);
-    for (size_t i = 0; i < fileCount; i++) {
+    for (size_t i = 0; i < fileCount; i++)
+    {
         FileEntry entry;
         rc = read(tracker_socket, &entry, sizeof(entry));
-        if (rc <= 0) {
+        if (rc <= 0)
+        {
             perror("ERROR reading file entry from tracker");
             return;
         }
@@ -642,21 +714,24 @@ void get_all_available_files(int tracker_socket)
     }
 }
 
-char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID) {
+char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID)
+{
     TrackerMessage msg;
     memset(&msg, 0, sizeof(msg));
 
     msg.header.type = MSG_REQUEST_ALL_AVAILABLE_SEED;
     msg.header.bodySize = 0;
 
-    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0) {
+    if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
+    {
         perror("ERROR writing header (ALL_AVAILABLE_SEED)");
         return NULL;
     }
 
     size_t fileCount = 0;
     ssize_t rc = read(tracker_socket, &fileCount, sizeof(fileCount));
-    if (rc <= 0) {
+    if (rc <= 0)
+    {
         char textBuf[256] = {0};
         rc = read(tracker_socket, textBuf, sizeof(textBuf) - 1);
         if (rc > 0)
@@ -667,16 +742,19 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID) {
     }
 
     FileEntry *entries = malloc(fileCount * sizeof(FileEntry));
-    if (!entries) {
+    if (!entries)
+    {
         fprintf(stderr, "Memory allocation failed\n");
         return NULL;
     }
 
     printf("Tracker says there are %zu files.\n", fileCount);
 
-    for (size_t i = 0; i < fileCount; i++) {
+    for (size_t i = 0; i < fileCount; i++)
+    {
         rc = read(tracker_socket, &entries[i], sizeof(FileEntry));
-        if (rc <= 0) {
+        if (rc <= 0)
+        {
             perror("ERROR reading file entry from tracker");
             free(entries);
             return NULL;
@@ -688,7 +766,8 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID) {
 
     printf("\nEnter fileID to print its metaFilename:\n");
     char input[256];
-    if (!fgets(input, sizeof(input), stdin)) {
+    if (!fgets(input, sizeof(input), stdin))
+    {
         fprintf(stderr, "Error reading input.\n");
         free(entries);
         return NULL;
@@ -697,14 +776,17 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID) {
     *selectedFileID = atoi(input);
 
     const char *metaFilename = NULL;
-    for (size_t i = 0; i < fileCount; i++) {
-        if (entries[i].fileID == *selectedFileID) {
+    for (size_t i = 0; i < fileCount; i++)
+    {
+        if (entries[i].fileID == *selectedFileID)
+        {
             metaFilename = entries[i].metaFilename;
             break;
         }
     }
 
-    if (!metaFilename) {
+    if (!metaFilename)
+    {
         printf("No file found with ID %zd\n", *selectedFileID);
         free(entries);
         return NULL;
@@ -716,7 +798,8 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID) {
     request_metadata_by_filename(tracker_socket, metaFilename, &fileMetaData);
 
     char *metafile_directory = malloc(256);
-    if (!metafile_directory) {
+    if (!metafile_directory)
+    {
         perror("malloc failed");
         free(entries);
         return NULL;
@@ -724,14 +807,16 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID) {
     snprintf(metafile_directory, 256, "./storage_downloads/%s", metaFilename);
 
     FILE *metafile_fp = fopen(metafile_directory, "wb");
-    if (!metafile_fp) {
+    if (!metafile_fp)
+    {
         perror("Failed to open file for writing");
         free(metafile_directory);
         free(entries);
         return NULL;
     }
 
-    if (fwrite(&fileMetaData, sizeof(FileMetadata), 1, metafile_fp) != 1) {
+    if (fwrite(&fileMetaData, sizeof(FileMetadata), 1, metafile_fp) != 1)
+    {
         perror("Failed to write metadata to file");
         fclose(metafile_fp);
         free(metafile_directory);
@@ -747,14 +832,8 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID) {
     return metafile_directory;
 }
 
-<<<<<<< Updated upstream
-
-
-
-
-=======
->>>>>>> Stashed changes
-void peer_fsm_handler(){
+void peer_fsm_handler()
+{
     switch (peer_ctx->current_state)
     {
     case Peer_FSM_INIT:
@@ -763,10 +842,13 @@ void peer_fsm_handler(){
         break;
 
     case Peer_FSM_CONNECTING_TO_TRACKER:
-        if (peer_connecting_to_tracker() == 1) {
+        if (peer_connecting_to_tracker() == 1)
+        {
             peer_ctx->current_state = Peer_FSM_ERROR;
-        } else {
-            //success
+        }
+        else
+        {
+            // success
             peer_ctx->current_state = Peer_FSM_TRACKER_CONNECTED;
         }
         break;
@@ -776,26 +858,28 @@ void peer_fsm_handler(){
         break;
 
     case Peer_FSM_LISTENING_PEER:
-        if (peer_listening_peer() == 1) {
+        if (peer_listening_peer() == 1)
+        {
             peer_ctx->current_state = Peer_FSM_ERROR;
-        } else {
+        }
+        else
+        {
             peer_ctx->current_state = Peer_FSM_SEEDING;
         }
         break;
 
     case Peer_FSM_SEEDING:
         // Handle seeding operations
-        if (peer_seeding() == 1) {
+        if (peer_seeding() == 1)
+        {
             peer_ctx->current_state = Peer_FSM_ERROR;
-        } else {
-        peer_ctx->current_state = Peer_FSM_LISTENING_PEER;
+        }
+        else
+        {
+            peer_ctx->current_state = Peer_FSM_LISTENING_PEER;
         }
         break;
 
-    case Peer_FSM_LEECHING:
-        // ignore first
-        break;
- 
     case Peer_FSM_ERROR:
         // Handle error state
         break;
@@ -807,24 +891,28 @@ void peer_fsm_handler(){
         break;
     default:
         break;
-        
     }
 }
 
-void peer_leeching(){
-    
+void peer_leeching()
+{
 }
 
-void peer_init(){
+void peer_init()
+{
     peer_ctx = malloc(sizeof(PeerContext));
-    if (peer_ctx != NULL) {
+    if (peer_ctx != NULL)
+    {
         memset(peer_ctx, 0, sizeof(PeerContext));
-    } else {
+    }
+    else
+    {
         fprintf(stderr, "Error: Failed to allocate memory for peer_ctx\n");
     }
 }
 
-int peer_connecting_to_tracker(){
+int peer_connecting_to_tracker()
+{
     int tracker_fd = connect_to_tracker();
     if (tracker_fd < 0)
     {
@@ -834,7 +922,8 @@ int peer_connecting_to_tracker(){
     return 0;
 }
 
-int peer_listening_peer(){
+int peer_listening_peer()
+{
     int listen_fd = setup_seeder_socket(atoi(PEER_1_PORT));
     if (listen_fd < 0)
     {
@@ -846,17 +935,20 @@ int peer_listening_peer(){
     return 0;
 }
 
-int peer_seeding(){
-    
+int peer_seeding()
+{
+
     int return_status = handle_peer_connection(peer_ctx->leecher_fd);
-    
-    if (return_status == 1) {
+
+    if (return_status == 1)
+    {
         // error
         printf("Error handling peer connection");
         return 1;
     }
-    
-    if (return_status == 2) {
+
+    if (return_status == 2)
+    {
         // abrupt connection or graceful termination
         printf("Disconnection from peer");
         return 0;
@@ -865,20 +957,23 @@ int peer_seeding(){
     return 0;
 }
 
-
-void peer_closing(){
-    if (peer_ctx->leecher_fd >= 0) {
+void peer_closing()
+{
+    if (peer_ctx->leecher_fd >= 0)
+    {
         close(peer_ctx->leecher_fd);
         peer_ctx->leecher_fd = -1;
     }
-    
-    if (peer_ctx->tracker_fd >= 0) {
+
+    if (peer_ctx->tracker_fd >= 0)
+    {
         close(peer_ctx->tracker_fd);
         peer_ctx->tracker_fd = -1;
     }
 }
 
-void peer_cleanup(){
+void peer_cleanup()
+{
     // Cleanup resources
 }
 
@@ -886,24 +981,27 @@ int main()
 {
     // Initialize peer context
     peer_ctx = malloc(sizeof(PeerContext));
-    if (!peer_ctx) {
+    if (!peer_ctx)
+    {
         fprintf(stderr, "Failed to allocate memory for peer context\n");
         return 1;
     }
-    
+
     memset(peer_ctx, 0, sizeof(PeerContext));
     peer_ctx->current_state = Peer_FSM_INIT;
-    
+
     peer_fsm_handler();
-    
-    while (peer_ctx->current_state != Peer_FSM_CLOSING) {
+
+    while (peer_ctx->current_state != Peer_FSM_CLOSING)
+    {
         peer_fsm_handler();
     }
 
-    if (peer_ctx->current_state == Peer_FSM_CLOSING) {
+    if (peer_ctx->current_state == Peer_FSM_CLOSING)
+    {
         peer_closing();
     }
-    
+
     // Free memory
     free(peer_ctx);
     return 0;

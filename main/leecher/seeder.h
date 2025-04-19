@@ -18,8 +18,7 @@
 #define PEER_1_PORT "6000"
 
 // Enums
-typedef enum
-{
+typedef enum TrackerMessageType {
     MSG_REQUEST_ALL_AVAILABLE_SEED = 0,
     MSG_REQUEST_META_DATA,
     MSG_REQUEST_SEEDER_BY_FILEID,
@@ -31,11 +30,8 @@ typedef enum
     MSG_ACK_CREATE_NEW_SEED,
     MSG_ACK_PARTICIPATE_SEED_BY_FILEID,
     MSG_ACK_SEEDER_BY_FILEID,
-    MSG_RESPOND_ERROR,
-    MSG_ACK_FILEHASH_BLOCKED,
-    MSG_ACK_IP_BLOCKED
+    MSG_RESPOND_ERROR
 } TrackerMessageType;
-
 
 typedef enum PeerFSMState{
     Peer_FSM_INIT,

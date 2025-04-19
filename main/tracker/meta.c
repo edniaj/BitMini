@@ -3,7 +3,7 @@
 #include <string.h>
 #include <openssl/sha.h> /* SHA-256 hash*/
 #include "meta.h"
-
+#include "database.h"
 #define BUFFER_SIZE 1024 * 5
 #define CHUNK_SIZE 1024
 
@@ -11,6 +11,45 @@
 metadata should be in json format - readability
 filename should be given by User
 */
+
+
+uint8_t* get_filehash_by_fileid(ssize_t fileID) {
+    static uint8_t hash[32]; // Static buffer to return
+    
+    // Generate metadata file path
+    char* filepath = build_metafile_path_by_fileid(fileID);
+    if (!filepath) return NULL;
+    
+    // Open metadata file
+    FILE* file = fopen(filepath, "rb");
+    free(filepath); // Free the filepath memory
+    
+    if (!file) return NULL;
+    
+    // Read metadata structure
+    FileMetadata metadata;
+    if (fread(&metadata, sizeof(FileMetadata), 1, file) != 1) {
+        fclose(file);
+        return NULL;
+    }
+    
+    // Copy file hash to our static buffer
+    memcpy(hash, metadata.fileHash, 32);
+    
+    fclose(file);
+    return hash;
+}
+
+char* build_metafile_path_by_fileid(ssize_t fileID)
+{
+    char *filename = malloc(256); // Allocate memory
+    if (filename == NULL)
+        return NULL;
+
+    snprintf(filename, 256, "%s/%s", RECORDS_FOLDER, get_meta_filename(fileID));
+    return filename;
+}
+
 
 char *generate_metafile_filepath_with_id(ssize_t fileID, const char *binary_filepath)
 {

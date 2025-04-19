@@ -3,7 +3,7 @@
 #include <string.h>
 #include <openssl/sha.h> /* SHA-256 hash*/
 #include "meta.h"
-
+#include "database.h"
 #define BUFFER_SIZE 1024 * 5
 #define CHUNK_SIZE 1024
 
@@ -11,6 +11,9 @@
 metadata should be in json format - readability
 filename should be given by User
 */
+
+
+
 
 char *generate_metafile_filepath_with_id(ssize_t fileID, const char *binary_filepath)
 {

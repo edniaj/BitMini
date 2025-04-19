@@ -46,7 +46,9 @@ typedef enum
     MSG_ACK_CREATE_NEW_SEED,
     MSG_ACK_PARTICIPATE_SEED_BY_FILEID,
     MSG_ACK_SEEDER_BY_FILEID,
-    MSG_RESPOND_ERROR
+    MSG_RESPOND_ERROR,
+    MSG_ACK_FILEHASH_BLOCKED,
+    MSG_ACK_IP_BLOCKED
 } TrackerMessageType;
 
 /* --------------------------------------------------------------------------
@@ -54,6 +56,8 @@ typedef enum
    -------------------------------------------------------------------------- */
 typedef enum TrackerFSMState {
     Tracker_FSM_INIT = 0,
+    TRACKER_FSM_COMMAND_MODE,
+    TRACKER_FSM_SET_UP_LISTENING,
     Tracker_FSM_LISTENING_PEER,
     Tracker_FSM_LISTENING_EVENT,
     Tracker_FSM_HANDLE_EVENT,
@@ -85,6 +89,7 @@ typedef struct {
     enum TrackerFSMState current_state;
     int listen_socket;
     int client_socket;
+    PeerInfo client_peer;    
 } TrackerContext;
 
 typedef struct TrackerMessageHeader
@@ -127,6 +132,8 @@ typedef struct
 // Core tracker functions
 void tracker_init(void);
 void tracker_event_handler(FSM_TRACKER_EVENT event);
+void tracker_set_up_listening();
+void tracker_command_mode();
 void tracker_listening_peer(void);
 void tracker_listening_event(void);
 void tracker_fsm_handler(void);
