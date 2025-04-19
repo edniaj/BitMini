@@ -24,11 +24,6 @@ typedef struct
 extern char *region_prefix[];
 extern char *region_name[];
 
-
-
-
-
-
 /* Global tracking arrays */
 extern BlockFileToRegion list_blocked_filehash_to_region[2048]; 
 extern int list_blocked_filehash_to_region_count;

@@ -9,14 +9,29 @@
 #define STORAGE_DIR "./storage_downloads/"
 #define BITFIELD_SIZE 1024
 
-int request_chunk(int sockfd, ssize_t fileID, ssize_t chunkIndex, TransferChunk *outChunk);
-uint8_t *request_bitfield(int sockfd, ssize_t fileID);
+/*
+This is our leeching protocol.
+*/
+
+/**
+ * @brief Requests a specific chunk from a seeder
+ *
+ * This function requests a specific chunk of a file from a seeder and stores the
+ * received data in the provided TransferChunk structure. It handles the complete
+ * messaging protocol including sending the request and receiving the response.
+ *
+ * @param sockfd Socket descriptor for the seeder connection
+ * @param fileID ID of the file to get the chunk from
+ * @param chunkIndex Index of the chunk to request
+ * @param outChunk Pointer to a TransferChunk structure to store the received chunk data
+ *
+ * @return 0 on success, -1 on failure
+ */
 
 uint8_t *request_bitfield(int sockfd, ssize_t fileID)
 {
     /* We are requesting the seeder's bitfield file because we allow partial seeding
      */
-
     // 1) Send the header for "request bitfield"
     PeerMessageHeader header;
     printf("📋 Requesting bitfield for fileID: %zd\n", fileID);
@@ -207,6 +222,20 @@ int write_chunk_to_file(const char *binary_filepath, const TransferChunk *chunk)
     return 0;
 }
 
+/**
+ * @brief Updates the local bitfield to mark a chunk as received
+ * @note 1 BYTE = 8 BITS, THIS MEANS WE HAVE TO MANIPULATE THE BYTE TO FIGURE THE BIT POSITION BEFORE TOGGLING IT!!! EASY MISTAKE
+ *
+ * After successfully receiving and writing a chunk, this function updates the
+ * corresponding bit in the local bitfield file to indicate the chunk is now available.
+ * It handles the bit manipulation required to set the specific bit.
+ *
+ * @param bitfield_filepath Path to the local bitfield file
+ * @param chunkIndex Index of the chunk that was received
+ *
+ * @return 0 on success, -1 on failure
+ */
+
 int update_bitfield(const char *bitfield_filepath, ssize_t chunkIndex)
 {
     FILE *fp = fopen(bitfield_filepath, "r+b"); // Open for reading and writing
@@ -263,6 +292,23 @@ void print_bitfield(const uint8_t *bitfield, size_t bitfield_size, const char *l
     printf("\n");
 }
 
+/**
+ * @brief leech_from_seeder - Coordinates the leeching process from a single seeder
+ * @note This function will be used in a for loop to leech from all seeders. Some seeders might have incomplete file
+ * @note Our protocol allow partial seeding enjoy :)
+ * This function manages the complete download process from a specific seeder:
+ * 1. Connects to the seeder
+ * 2. Requests their bitfield - their bitfield represents the chunks that they have
+ * 3. We will search for our missing chunks, and request them from the seeder
+ * 4. Requests and downloads missing chunks
+ * 5. Updates the local bitfield and binary file for each received chunk ^_^
+ *
+ * @param seeder PeerInfo structure with seeder connection details
+ * @param bitfield_filepath Path to the local bitfield file
+ * @param binary_filepath Path to the local binary file being downloaded
+ * @param totalChunk Total number of chunks in the file
+ * @param fileID ID of the file being downloaded
+ */
 void leech_from_seeder(PeerInfo seeder, char *bitfield_filepath, char *binary_filepath, ssize_t totalChunk, ssize_t fileID)
 {
     printf("\n🔄 Starting to leech from seeder %s:%s\n", seeder.ip_address, seeder.port);
@@ -366,6 +412,26 @@ void leech_from_seeder(PeerInfo seeder, char *bitfield_filepath, char *binary_fi
     close(seeder_fd);
 }
 
+/*
+ * @brief leeching -  Main leeching function that coordinates downloads from multiple seeders
+ * 
+ * This is the entry point for the leeching process. It:
+ * 1. Loads file metadata
+ * 2. Iterates through available seeders
+ * 3. Checks for its own missing bit in the bitfield, if it has the chunk, it will not try to leech from that seeder
+ * 4. Manages overall download completion
+ *
+ * The function attempts to download from seeders sequentially until the file is
+ * complete or all seeders have been tried.
+ *
+ * @param seeder_list Array of PeerInfo structures for available seeders
+ * @param num_seeders Number of seeders in the seeder_list
+ * @param metadata_filepath Path to the metadata file for the file being downloaded
+ * @param bitfield_filepath Path to the local bitfield file
+ * @param binary_filepath Path to the local binary file being downloaded
+ *
+ * @return 0 on success, 1 on failure
+ */
 int leeching(PeerInfo *seeder_list, size_t num_seeders, char *metadata_filepath, char *bitfield_filepath, char *binary_filepath)
 {
     printf("\n📦 Starting leeching process\n");

@@ -1,5 +1,19 @@
-#ifndef SEEDER_H
-#define SEEDER_H
+#ifndef PEER_H
+#define PEER_H
+
+/**
+ * @file peer.h
+ * @brief Interface for peer functionality in the P2P file sharing system
+ *
+ * This header defines the core data structures, constants, and function prototypes
+ * for a peer node in the P2P file sharing network. It includes:
+ *
+ * 1. Message types for tracker communication
+ * 2. FSM state definitions for the peer state machine
+ *
+ * The peer can act as both a seeder (sharing files) and a leecher (downloading files)
+ * and communicates with a central tracker to discover other peers and files.
+ */
 
 #include <stddef.h> // for size_t, ssize_t
 
@@ -7,7 +21,7 @@
 #include "bitfield.h" // bitfield functions
 #include "database.h" // FileEntry
 #include "leech.h"    // leeching()
-#include "seed.h"     // setup_seeder_socket(), handle_peer_connection()
+#include "peer.h"     // setup_seeder_socket(), handle_peer_connection()
 
 // Constants
 #define STORAGE_DIR "./storage_downloads/"
@@ -18,7 +32,8 @@
 #define PEER_1_PORT "6000"
 
 // Enums
-typedef enum TrackerMessageType {
+typedef enum
+{
     MSG_REQUEST_ALL_AVAILABLE_SEED = 0,
     MSG_REQUEST_META_DATA,
     MSG_REQUEST_SEEDER_BY_FILEID,
@@ -30,8 +45,11 @@ typedef enum TrackerMessageType {
     MSG_ACK_CREATE_NEW_SEED,
     MSG_ACK_PARTICIPATE_SEED_BY_FILEID,
     MSG_ACK_SEEDER_BY_FILEID,
-    MSG_RESPOND_ERROR
+    MSG_RESPOND_ERROR,
+    MSG_ACK_FILEHASH_BLOCKED,
+    MSG_ACK_IP_BLOCKED
 } TrackerMessageType;
+
 
 typedef enum PeerFSMState{
     Peer_FSM_INIT,
@@ -46,7 +64,12 @@ typedef enum PeerFSMState{
     PEER_FSM_HANDLE_EVENT,
 } PeerFSMState;
 
-// Structs
+
+/**
+ * @struct PeerContext
+ * @brief This is the context of the peer, it is meant to be a static global variable.
+ * It simplifies clean up, there are some memory management that the FSM cannot do - thus we need a Context management struct
+ */
 typedef struct {
     PeerFSMState current_state;
     int tracker_fd;
@@ -58,6 +81,9 @@ typedef struct {
     char metaFilename[256];
 } RequestMetadataBody;
 
+/*
+This struct is important, it is so that we can malloc the correct size of the message
+*/
 typedef struct {
     TrackerMessageType type;
     ssize_t bodySize;
@@ -68,6 +94,11 @@ typedef struct {
     ssize_t fileID;
 } PeerWithFileID;
 
+/*
+* @union TrackerMessageBody
+* Perfectly appropriate to use a union here. The message body can only be one type at a time.
+* We need to build a generic message body. 
+*/
 typedef union {
     PeerInfo singleSeeder;
     PeerInfo seederList[64];
@@ -108,4 +139,4 @@ void peer_closing();
 void peer_cleanup();
 void peer_fsm_handler();
 
-#endif // SEEDER_H
+#endif // PEER_H

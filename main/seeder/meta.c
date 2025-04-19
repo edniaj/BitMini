@@ -199,7 +199,7 @@ void read_metadata(const char *meta_filename, FileMetadata *fileMetaData)
 }
 
 /*
-   Example test function.
+   Unit testing
    We'll create a metadata file for "gray_cat.png" with fileID=1,
    then write "0001_gray_cat.png.meta" in ./records.
 */

@@ -4,9 +4,6 @@
 #include <stdint.h>
 #include "tracker.h"
 
-
-
-
 typedef enum
 {
     AST_ACTION,     /* BLOCK / ALLOW  / GET           */

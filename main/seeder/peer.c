@@ -1,22 +1,45 @@
+/*
+@brief Header files 
+peer.h - PLEASE READ THIS FILE, THE STANDARDS FOR HOW THE PROTOCOLS WORK - IS IMPLEMENTED HERE
+peerCommunication.h establishes the communication protocol standard between the peer to peer
+leech.h establishes the leeching protocol standard between the peer to peer
+seed.h establishes the seeding protocol standard between the peer to peer
+
+database.h is not a database
+    - MAINLY used in the tracker however there are many utility functions that help us find files in our directory.
+    - it acts like a database, managing the files for metadata, binary, bitfield and the metalog which is our "yellow pages"
+    - Engineered for perfection
+
+bitfield.h - helped us create and manage the bitfield path
+            - however, many of the bit calculation is done inside leech.c 
+
+meta.h - establishes the metadata protocol standard between the peer to peer
+
+arpa/inet.h - for TCP networking. Due to the constrain to man hours, we did not implement the raw socket connection from scratch.
+            - we used the arpa/inet.h library to help us with the TCP connection
+
+GENERAL NOTES:
+    PEER IS AN FSM, IT HAS THE FEATURES OF A SEEDER AND LEECHER.
+    WHEN IT IS CONNECTED TO THE TRACKER, IT WILL HAVE A CLI TO INTERACT WITH THE TRACKER.
+    THE TRACKER WILL BE RESPONSIBLE FOR HANDLING THE STATE OF THE NETWORK
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
-#include <arpa/inet.h> // for inet_pton(), sockadd_in, etc.
-
-#include "seeder.h" // Include our own header first to ensure types are defined
-#include "meta.h"   // FileMetadata struct, etc.
-
+#include <arpa/inet.h> 
+#include "meta.h"   
+#include "seed.h"
 #include "database.h"
 #include "bitfield.h"
 #include "leech.h"
-#include "seed.h"
-
-// #include "parser.h"
-
+#include "peer.h"
 #include "peerCommunication.h"
 
+  - very important file, the metafile standard is the backbone of our p2p protocol system
+*/
 #define STORAGE_DIR "./storage_downloads/"
 #define CHUNK_DATA_SIZE 1024
 
@@ -25,6 +48,27 @@
 
 #define PEER_1_IP "127.0.0.1"
 #define PEER_1_PORT "6000"
+
+/**
+ * 
+ * @brief FSM FOR PEER
+ * STATES OF FSM
+ * This function handles state transitions and appropriate actions for the peer's FSM.
+ * States include:
+ * - INIT: Initial state for memory allocation and setup
+ * - CONNECTING_TO_TRACKER: Establishing connection to tracker
+ * - TRACKER_CONNECTED: Connected to tracker, it will open up a CLI for user to interact with
+ * - LISTENING_PEER: Listening for incoming peer connections
+ * - SEEDING: Open up socket and actively share file chunks to a connected peer
+ * - ERROR: Error handling state
+ * - CLEANUP: Resource cleanup state
+ * - CLOSING: Final state before termination
+ *
+ * @return void
+ */
+
+
+
 
 PeerContext *peer_ctx;
 
@@ -98,9 +142,8 @@ char *generate_binary_filepath(char *metaFilePath)
     }
     return NULL;
 }
-/* ------------------------------------------------------------------------
-    Tracker Communication Functions
- ------------------------------------------------------------------------ */
+
+/* Tracker communication functions*/
 int connect_to_tracker()
 {
 
@@ -144,9 +187,27 @@ void disconnect_from_tracker(int tracker_socket)
     close(tracker_socket);
     printf("✅ Seeder successfully disconnected from Tracker\n");
 }
-/******************************************************************************
-SEEDER -> TRACKER FUNCTIONS
- ******************************************************************************/
+/**
+ * @brief request_create_new_seed
+ * Intetion : We want to seed a file that has not be seeded before, thus we need to register the metafile with the tracker
+ * This function performs the following operations:
+ * 1. Creates metadata for the binary file (hash, size, chunks)
+ * 2. Sends the metadata to the tracker for registration
+ * 3. Receives a new fileID assigned by the tracker
+ *     - tracker will assign a new fileID to the metafile, and then log it into meta.log (this is our yellow pages)
+ * 4. Creates a permanent metadata file with the assigned fileID
+ * 5. Creates a bitfield file indicating all chunks are available
+ *
+ *
+ * @param tracker_socket Socket descriptor for tracker server connection
+ * @param binary_file_path Path to the binary file to be shared
+ *
+ *
+ * This function creates two files on disk:
+ *       1. A .meta file containing file metadata
+ *       2. A .bitfield file indicating available chunks
+ *       Both files will be named based on the fileID assigned by the tracker.
+ */
 void request_create_new_seed(int tracker_socket, const char *binary_file_path)
 {
     // 1) Build partial metadata (with no final fileID).
@@ -239,6 +300,23 @@ void request_create_new_seed(int tracker_socket, const char *binary_file_path)
     free(bitfieldPath);
 }
 
+/**
+ * request_seeder_by_fileID
+ * @brief Requests a list of peers seeding a specific file from the tracker
+ *
+ * This function queries the tracker for all peers currently seeding the file
+ * identified by fileID. It handles various tracker responses including error cases,
+ * blocked file hashes, and blocked IP addresses.
+ *
+ * @param tracker_socket Socket descriptor for tracker server connection
+ * @param fileID The unique identifier of the file to find seeders for
+ * @param num_seeders_out We use this to determine the number of seeders, so that we iterate later. it is useful!!
+ *
+ * @return PeerInfo* Dynamically allocated array of PeerInfo structures containing
+ *         information about each seeder (IP address and port). Returns NULL if
+ *         no seeders are available or in case of errors.
+ *         
+ */
 PeerInfo *request_seeder_by_fileID(int tracker_socket, ssize_t fileID, size_t *num_seeders_out)
 {
     // 1) Build the request
@@ -263,6 +341,17 @@ PeerInfo *request_seeder_by_fileID(int tracker_socket, ssize_t fileID, size_t *n
     if (read(tracker_socket, &ack_header, sizeof(ack_header)) <= 0)
     {
         perror("ERROR reading ack header (REQUEST_SEEDER_BY_FILEID)");
+        return NULL;
+    }
+
+    if (ack_header.type == MSG_ACK_FILEHASH_BLOCKED)
+    {
+        printf("Tracker refused to allow seeding of this file. \nIt is in the blocked list.\n");
+        return NULL;
+    }
+    else if (ack_header.type == MSG_ACK_IP_BLOCKED)
+    {
+        printf("Your IP is blocked. Tracker refused your ip\n");
         return NULL;
     }
 
@@ -306,6 +395,23 @@ PeerInfo *request_seeder_by_fileID(int tracker_socket, ssize_t fileID, size_t *n
 
     return seederList;
 }
+
+/**
+ * @brief Registers the current peer as a seeder for a specific file
+ *
+ * Our parser will allow users to create block list. User might receive msg_ack_ip_blocked or msg_ack_filehash_blocked
+ *   - msg_ack_ip_blocked : Your IP is blocked. Tracker refused your ip
+ *   - msg_ack_filehash_blocked : Tracker refused to allow seeding of this file. It is in the blocked list.
+ *
+ * @param tracker_socket Socket descriptor for tracker server connection
+ * @param myIP IP address where this peer is listening for connections
+ * @param myPort Port number where this peer is listening for connections
+ * @param fileID The unique identifier of the file to seed
+ *
+ * 
+ * @note This function requires the peer to have a valid copy of the file
+ *       and its metadata before calling.
+ */
 
 void request_participate_seed_by_fileID(int tracker_socket, const char *myIP, const char *myPort, ssize_t fileID)
 {
@@ -353,6 +459,15 @@ void request_participate_seed_by_fileID(int tracker_socket, const char *myIP, co
             }
         }
     }
+    else if (ack_header.type == MSG_ACK_FILEHASH_BLOCKED)
+    {
+        printf("Tracker refused to allow seeding of this file. \nIt is in the blocked list.\n");
+    }
+    else if (ack_header.type == MSG_ACK_IP_BLOCKED)
+    {
+        printf("Your IP is blocked. Tracker refused your ip\n");
+    }
+
     else
     {
         fprintf(stderr, "Tracker did not ACK participation. Type=%d\n", ack_header.type);
@@ -402,6 +517,34 @@ void request_create_seeder(int tracker_socket, const char *myIP, const char *myP
         perror("ERROR reading tracker response (CREATE_SEEDER)");
 }
 
+/**
+ * @brief tracker_cli_loop - this is only triggered when the FSM changes to peer_ctx->current_state = Peer_FSM_TRACKER_CLI;
+ * 
+
+ * @brief Provides a command-line interface for interacting with the tracker
+ *  
+ * This function implements the main user interface for the P2P client, offering
+ * a menu of operations that can be performed with the tracker and other peers:
+ * 
+ * - Register as a seeder
+ * - List available files in the network
+ * - Create a new seed from a local file
+ * - Download (leech) a file by its ID
+ * - Participate in seeding an existing file
+ * - Start seeding mode to serve files to other peers
+ *
+ * The function handles user input, executes the selected operations, and
+ * manages the associated resource allocation and cleanup.
+ *
+ * @param tracker_socket Socket descriptor for tracker server connection
+ * @param ip_address IP address where this peer is accessible
+ * @param port Port number where this peer is accessible
+ *
+ * @return void. Function returns when user selects the exit option or
+ *         when certain operations require transition to a different mode.
+ * 
+ */
+
 void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
 {
 
@@ -421,7 +564,6 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
         printf("4) Leech file by fileID\n");
         printf("5) Participate seeding by fileID\n");
         printf("6) Start Seeding\n");
-        printf("7) Execute command (e.g., BLOCK FILENAME ...)\n");
         printf("0) Exit Tracker\n");
         printf("Choose an option: ");
 
@@ -465,6 +607,7 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
         case 4:
         {
             ssize_t selectedFileID;
+            // User will input the fileID, we will get the metadata filepath
             char *metaFilePath = get_metadata_via_cli(tracker_socket, &selectedFileID);
             char *binary_filepath;
             if (!metaFilePath)
@@ -645,23 +788,6 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
             return;
 
             break;
-
-            // case 7:
-            //     printf("Enter command (e.g., BLOCK FILENAME \"file.jpg\" FROM CHINA TO AMERICA):\n");
-            //     if (!fgets(input, 250, stdin)) {
-            //         printf("Error reading command\n");
-            //         break;
-            //     }
-            //     input[strcspn(input, "\n")] = 0;
-            //     ASTNode *ast = parse_command(input);
-            //     if (ast) {
-            //         execute_ast(ast, tracker_socket, NULL);
-            //         free_ast(ast);
-            //     } else {
-            //         printf("Invalid command\n");
-            //     }
-            //     break;
-
         default:
             printf("Unknown option.\n");
             break;
@@ -717,6 +843,26 @@ void get_all_available_files(int tracker_socket)
     }
 }
 
+/**
+ * @brief get_metadata_via_cli - User will input the fileID, we will get the metadata filepath
+ *
+ * This function implements a command-line interface flow to:
+ * 1. Request a list of available files from the tracker
+ * 2. Display the files to the user
+ * 3. Allow the user to select a file by ID from THE list
+ * 4. Retrieve the detailed metadata for the selected file
+ * 5. Save the metadata to a local file for later use
+ *
+ * The function uses proper error handling with a cleanup pattern to ensure
+ * resources are freed in case of failures.
+ *
+ * @param tracker_socket Socket descriptor for tracker server connection
+ * @param selectedFileID Pointer to store the ID of the file selected by the user
+ *
+ * @return char* Path to the local metadata file that was created.
+ *         Returns NULL if any operation fails.
+ */
+
 char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID)
 {
     TrackerMessage msg;
@@ -725,10 +871,14 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID)
     msg.header.type = MSG_REQUEST_ALL_AVAILABLE_SEED;
     msg.header.bodySize = 0;
 
+    FileEntry *entries = NULL;
+    char *metafile_directory = NULL;
+    FILE *metafile_fp = NULL;
+
     if (write(tracker_socket, &msg.header, sizeof(msg.header)) < 0)
     {
         perror("ERROR writing header (ALL_AVAILABLE_SEED)");
-        return NULL;
+        goto cleanup;
     }
 
     size_t fileCount = 0;
@@ -741,26 +891,24 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID)
             printf("Tracker says: %s\n", textBuf);
         else
             perror("ERROR reading from tracker (ALL_AVAILABLE_SEED)");
-        return NULL;
+        goto cleanup;
     }
 
-    FileEntry *entries = malloc(fileCount * sizeof(FileEntry));
+    entries = malloc(fileCount * sizeof(FileEntry));
     if (!entries)
     {
         fprintf(stderr, "Memory allocation failed\n");
-        return NULL;
+        goto cleanup;
     }
 
     printf("Tracker says there are %zu files.\n", fileCount);
-
     for (size_t i = 0; i < fileCount; i++)
     {
         rc = read(tracker_socket, &entries[i], sizeof(FileEntry));
         if (rc <= 0)
         {
             perror("ERROR reading file entry from tracker");
-            free(entries);
-            return NULL;
+            goto cleanup;
         }
 
         printf(" -> FileID: %04zd TotalByte: %zd MetaFile: %s\n",
@@ -772,8 +920,7 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID)
     if (!fgets(input, sizeof(input), stdin))
     {
         fprintf(stderr, "Error reading input.\n");
-        free(entries);
-        return NULL;
+        goto cleanup;
     }
     input[strcspn(input, "\n")] = 0;
     *selectedFileID = atoi(input);
@@ -791,8 +938,7 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID)
     if (!metaFilename)
     {
         printf("No file found with ID %zd\n", *selectedFileID);
-        free(entries);
-        return NULL;
+        goto cleanup;
     }
 
     printf("📄 metaFilename for fileID %zd: %s\n", *selectedFileID, metaFilename);
@@ -800,40 +946,66 @@ char *get_metadata_via_cli(int tracker_socket, ssize_t *selectedFileID)
     FileMetadata fileMetaData;
     request_metadata_by_filename(tracker_socket, metaFilename, &fileMetaData);
 
-    char *metafile_directory = malloc(256);
+    metafile_directory = malloc(256);
     if (!metafile_directory)
     {
         perror("malloc failed");
-        free(entries);
-        return NULL;
+        goto cleanup;
     }
     snprintf(metafile_directory, 256, "./storage_downloads/%s", metaFilename);
 
-    FILE *metafile_fp = fopen(metafile_directory, "wb");
+    metafile_fp = fopen(metafile_directory, "wb");
     if (!metafile_fp)
     {
         perror("Failed to open file for writing");
-        free(metafile_directory);
-        free(entries);
-        return NULL;
+        goto cleanup;
     }
 
     if (fwrite(&fileMetaData, sizeof(FileMetadata), 1, metafile_fp) != 1)
     {
         perror("Failed to write metadata to file");
-        fclose(metafile_fp);
-        free(metafile_directory);
-        free(entries);
-        return NULL;
+        goto cleanup;
     }
 
     fclose(metafile_fp);
     free(entries);
 
     *selectedFileID = fileMetaData.fileID;
-
     return metafile_directory;
+
+cleanup:
+    if (entries)
+        free(entries);
+    if (metafile_fp)
+        fclose(metafile_fp);
+    if (metafile_directory)
+        free(metafile_directory);
+    return NULL;
 }
+
+/**
+ * @brief peer_fsm_handler - Implements the Finite State Machine (FSM) for peer operations
+ *
+ * This function is the core of the peer's state machine implementation, handling
+ * transitions between different operational states:
+ *
+ * - INIT: Initial state for setting up peer context
+ * - CONNECTING_TO_TRACKER: Establishing connection with the tracker server
+ * - TRACKER_CONNECTED: Connected to tracker and ready for user interaction
+ * - LISTENING_PEER: Listening for incoming peer connections (seeding mode)
+ * - SEEDING: Actively sharing files with connected peers
+ * - ERROR: Error state for handling unexpected conditions
+ * - CLEANUP: Resource cleanup before termination
+ * - CLOSING: Final state before program exit
+ *
+ * Each state has specific entry actions and transition conditions that determine
+ * the peer's behavior in the P2P network.
+ *
+ * @return void
+ * 
+ * @note The function relies on the global peer_ctx structure to track the
+ *       current state and associated resources.
+ */
 
 void peer_fsm_handler()
 {
@@ -883,10 +1055,6 @@ void peer_fsm_handler()
         }
         break;
 
-    case Peer_FSM_LEECHING:
-        // ignore first
-        break;
-
     case Peer_FSM_ERROR:
         // Handle error state
         break;
@@ -901,9 +1069,6 @@ void peer_fsm_handler()
     }
 }
 
-void peer_leeching()
-{
-}
 
 void peer_init()
 {

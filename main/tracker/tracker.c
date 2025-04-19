@@ -9,11 +9,18 @@
 #define MAX_SEEDERS_PER_FILE 64
 #define MAX_SEEDERS 1000
 
-// urgent : Theres a bug in the lookup of binary files.
 
-/* --------------------------------------------------------------------------
-   🔹 Message Types
-   -------------------------------------------------------------------------- */
+/*
+General architecture of the tracker:
+
+FSM for tracker
+
+Tracker has an event manager that will handle the events from the peer
+
+
+Parser
+Policy management
+*/
 
 static PeerInfo list_seeders[MAX_SEEDERS];
 static PeerInfo *file_to_seeders[MAX_FILES][MAX_SEEDERS_PER_FILE];
@@ -120,13 +127,6 @@ PeerInfo *add_peer(const PeerInfo *p)
     return NULL;
 }
 
-void remove_peer(PeerInfo *p)
-{
-    // Mark the slot as free by clearing IP/port
-    p->ip_address[0] = '\0';
-    p->port[0] = '\0';
-}
-
 int add_seeder_to_file(ssize_t fileID, PeerInfo *p)
 {
     // First, check if already present
@@ -151,19 +151,6 @@ int add_seeder_to_file(ssize_t fileID, PeerInfo *p)
 
     // No space available
     return -1;
-}
-
-int remove_seeder_from_file(ssize_t fileID, PeerInfo *p)
-{
-    for (int i = 0; i < MAX_SEEDERS_PER_FILE; i++)
-    {
-        if (file_to_seeders[fileID][i] == p)
-        {
-            file_to_seeders[fileID][i] = NULL;
-            return 0; // success
-        }
-    }
-    return -1; // not found
 }
 
 /* Request handler functions */
@@ -463,34 +450,12 @@ void handle_request_seeder_by_fileID(int client_socket, ssize_t fileID)
         return;
     }
 
-
     // This is the fileHash of the seed, we will use this to check if it is blocked
     uint8_t *seed_hash = get_filehash_by_fileid(fileID);
 
     int filehash_flag = is_filehash_blocked(seed_hash);
     int region_filehash_flag = is_peer_blockfiletoregion_blocked(&(ctx->client_peer), seed_hash);
 
-    if (filehash_flag > 0)
-    {
-        printf("Seed filehash is blocked. We reject the request ");
-
-        TrackerMessageHeader ackHeader;
-
-        ackHeader.type = MSG_ACK_FILEHASH_BLOCKED;
-        write(client_socket, &ackHeader, sizeof(TrackerMessageHeader));
-        return;
-    }
-
-    if (region_filehash_flag > 0)
-    {
-        printf("Requester region has been blocked from seeding this file ");
-        TrackerMessageHeader ackHeader;
-
-        ackHeader.type = MSG_ACK_FILEHASH_BLOCKED;
-        write(client_socket, &ackHeader, sizeof(TrackerMessageHeader));
-
-        return;
-    }
     if (filehash_flag > 0)
     {
         printf("Seed filehash is blocked. We reject the request ");
@@ -821,14 +786,10 @@ FSM_TRACKER_EVENT map_msg_type_to_fsm_event(TrackerMessageType type)
         return FSM_EVENT_REQUEST_SEEDER_BY_FILEID;
     case MSG_REQUEST_CREATE_SEEDER:
         return FSM_EVENT_REQUEST_CREATE_SEEDER;
-    case MSG_REQUEST_DELETE_SEEDER:
-        return FSM_EVENT_REQUEST_DELETE_SEEDER;
     case MSG_REQUEST_CREATE_NEW_SEED:
         return FSM_EVENT_REQUEST_CREATE_NEW_SEED;
     case MSG_REQUEST_PARTICIPATE_SEED_BY_FILEID:
         return FSM_EVENT_REQUEST_PARTICIPATE_SEED_BY_FILEID;
-    case MSG_REQUEST_UNPARTICIPATE_SEED:
-        return FSM_EVENT_REQUEST_UNPARTICIPATE_SEED;
     case MSG_ACK_CREATE_NEW_SEED:
         return FSM_EVENT_ACK_CREATE_NEW_SEED;
     case MSG_ACK_PARTICIPATE_SEED_BY_FILEID:
@@ -897,14 +858,8 @@ void tracker_set_up_listening()
 void tracker_closing()
 {
     printf("FSM Reached closing");
-    if (ctx->listen_socket >= 0)
-    {
-        close(ctx->listen_socket);
-    }
-    if (ctx->client_socket >= 0)
-    {
-        close(ctx->client_socket);
-    }
+    tracker_close_peer();
+
     ctx->current_state = Tracker_FSM_CLEANUP;
 
     exit_success();
@@ -915,7 +870,9 @@ void tracker_cleanup()
     free(ctx);
     free(header);
     free(body);
-
+    ctx = NULL;
+    header = NULL;
+    body = NULL;
     printf("FSM Reached cleanup");
     return;
 }
@@ -992,24 +949,25 @@ void tracker_command_mode()
             }
 
             execute_ast(ast, -1, NULL);
+            free(input);
             free_ast(ast);
             break;
         }
 
         case 2:
             ctx->current_state = TRACKER_FSM_SET_UP_LISTENING;
+            free(input);
             return;
         }
     }
-
     free(input);
+
 }
 
 void tracker_close_peer()
 {
     if (ctx->client_socket >= 0)
     {
-        printf("closing client socket");
         close(ctx->client_socket);
     }
     ctx->current_state = Tracker_FSM_LISTENING_PEER;
@@ -1035,6 +993,6 @@ int main(void)
     {
         tracker_closing();
     }
-
+    
     return 0;
 }
