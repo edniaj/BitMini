@@ -9,17 +9,20 @@
 #define MAX_SEEDERS_PER_FILE 64
 #define MAX_SEEDERS 1000
 
-
 /*
-General architecture of the tracker:
+*@brief General architecture of the tracker:
 
-FSM for tracker
+The tracker is a FSM (Finite State Machine)
+- it has an event manager that will handle the events from the peer
+    - events are triggered by the peer
+- it has a command mode that will allow the user to configure the tracker
 
-Tracker has an event manager that will handle the events from the peer
+When you first launch the tracker, it will have a CLI
+    1. You can enter command mode and CRUD the rules of the tracker
+    2. Start listening for peers and WORK
 
-
-Parser
-Policy management
+@note - We integrated our parser in this function tracker_command_mode()
+      - Explaination of our Policy will be in our parser files. Please take a look :)
 */
 
 static PeerInfo list_seeders[MAX_SEEDERS];
@@ -94,7 +97,9 @@ int setup_server(void)
     return listen_socketfd;
 }
 
-/* Peer management functions */
+/* Peer management functions
+    this is used when we are trying to register a peer, or when a non-registered peer request to seed
+*/
 PeerInfo *find_peer(const PeerInfo *p)
 {
     for (int i = 0; i < MAX_SEEDERS; i++)
@@ -126,6 +131,10 @@ PeerInfo *add_peer(const PeerInfo *p)
     // If we reach here, no free slot was found
     return NULL;
 }
+/*
+The functions below will be called by the event manager
+@note events are triggered by the peer via a network call
+*/
 
 int add_seeder_to_file(ssize_t fileID, PeerInfo *p)
 {
@@ -153,7 +162,6 @@ int add_seeder_to_file(ssize_t fileID, PeerInfo *p)
     return -1;
 }
 
-/* Request handler functions */
 void handle_create_seeder(int client_socket, const PeerInfo *p)
 {
     // 1) Check if peer already in master array
@@ -265,6 +273,10 @@ void handle_create_new_seed(int client_socket, const FileMetadata *meta)
     printf("done  - sending ack \n\n ");
 }
 
+/*
+This is our policy management
+Our goal for this project is to implement some level of policy and censorship in a peer to peer network
+*/
 int is_ip_blocked(const char *ip_address)
 {
     /*
@@ -327,6 +339,30 @@ int is_peer_blockfiletoregion_blocked(const PeerInfo *peer,
 
     return 0; // not blocked
 }
+
+/**
+ * @brief Handles a peer's request to participate in seeding a file
+ *
+ * This function processes requests from peers who want to become seeders for
+ * a specific file identified by fileID. It performs several policy checks:
+ *   1. Verifies the requesting peer's IP is not blocked
+ *   2. Ensures the peer is registered in the master seeder list
+ *   3. Checks if the requested file's hash is globally blocked
+ *   4. Enforces region-specific file restrictions
+ *  @note - We will use the fileID to get the filehash
+ * 
+ * If all checks pass, the peer is added to the file's seeder list.
+ *
+ * @param client_socket      Socket for communication with the requesting peer
+ * @param peerWithFileID     Structure containing peer information and the requested fileID
+ *
+ * Responses:
+ * - MSG_ACK_IP_BLOCKED: When peer's IP is in the blocked list
+ * - MSG_RESPOND_ERROR: When peer is not registered as a seeder
+ * - MSG_ACK_FILEHASH_BLOCKED: When file hash is blocked (globally or for region)
+ * - MSG_ACK_PARTICIPATE_SEED_BY_FILEID: On successful participation
+ * - Text messages: For already participating or no space available cases
+ */
 void handle_request_participate_by_fileID(int client_socket, const PeerWithFileID *peerWithFileID)
 {
 
@@ -551,6 +587,22 @@ void handle_request_metadata(int client_socket, const RequestMetadataBody *req)
     printf("✅ Sent metadata for file: %s\n", req->metaFilename);
 }
 
+/**
+ * @brief Reads a message header from the client connection
+ *
+ * Reads a TrackerMessageHeader structure from the current client socket and
+ * stores it in the global 'header' variable. This function handles various
+ * connection states and error conditions including:
+ * - Connection resets
+ * - Client disconnections
+ * - Incomplete reads
+ *
+ * On error conditions, this function will update the FSM state appropriately
+ * to either listen for new peers or enter the error state.
+ *
+ * @return int 1 if an error or special case occurred (caller should return early),
+ *             0 on successful read
+ */
 int read_header()
 {
     printf("Waiting for request...\n");
@@ -599,6 +651,22 @@ int read_header()
 
     return 0;
 }
+
+/**
+ * @brief Reads a message body from the client connection
+ *
+ * After the header has been read successfully, this function reads the message body
+ * based on the bodySize specified in the header. The data is stored in the global
+ * 'body' variable. This function:
+ * - Detects client disconnection during body transmission
+ * - Handles connection reset errors
+ *
+ * On error conditions, this function will update the FSM state appropriately
+ * to either listen for new peers or enter the error state.
+ *
+ * @return int 1 if an error or special case occurred (caller should return early),
+ *             0 on successful read
+ */
 int read_body()
 {
     if (header->bodySize > 0)
@@ -639,6 +707,23 @@ int read_body()
 
     return 0; // Success
 }
+
+/**
+ * @brief Main event handler for processing peer requests
+ *
+ * This function processes tracker events that have been mapped from received
+ * message types. It:
+ * - Validates appropriate body sizes for each event type
+ * - Routes the request to specialized handler functions
+ * - Updates the FSM state after handling
+ * - Reports errors for invalid or unimplemented event types
+ *
+ * Most handlers will transition the FSM back to the listening state
+ * after completing their work, but may transition to error state
+ * if validation fails.
+ *
+ * @param event The event type mapped from the received message header
+ */
 void tracker_event_handler(FSM_TRACKER_EVENT event)
 {
 
@@ -719,6 +804,18 @@ void tracker_event_handler(FSM_TRACKER_EVENT event)
     }
 }
 
+/**
+ * @brief Accepts new peer connections and initializes the communication context
+ *
+ * This function:
+ * - Accepts incoming connections on the listen socket
+ * - Extracts the client's IP address and port
+ * - Creates a PeerInfo structure for the client
+ * - Stores connection information in the tracker context
+ * - Transitions the FSM to the listening event state
+ *
+ * If accepting a connection fails, transitions to the error state.
+ */
 void tracker_listening_peer()
 {
     struct sockaddr_in client_addr;
@@ -753,6 +850,18 @@ void tracker_listening_peer()
     ctx->current_state = Tracker_FSM_LISTENING_EVENT;
 }
 
+/**
+ * @brief Reads and processes incoming messages from a connected peer
+ *
+ * This function coordinates the message reading process by:
+ * 1. Reading the message header (through read_header())
+ * 2. Reading the message body (through read_body())
+ * 3. Transitioning to the event handling state if both reads succeed
+ *
+ * If either read operation reports an error or special condition,
+ * this function returns early, preserving the state transition 
+ * that was set by the read function.
+ */
 void tracker_listening_event()
 {
 
@@ -773,7 +882,20 @@ void tracker_listening_event()
 
     ctx->current_state = Tracker_FSM_HANDLE_EVENT;
 }
-
+/**
+ * @brief Maps protocol message types to internal FSM event types
+ *
+ * This function converts TrackerMessageType values (which come from the 
+ * wire protocol) into corresponding FSM_TRACKER_EVENT values (which 
+ * are used by the internal state machine).
+ *
+ * This mapping enables the tracker to interpret messages received from peers
+ * and route them to the appropriate event handlers within the FSM.
+ *
+ * @param type The TrackerMessageType value from a received message header
+ * @return The corresponding FSM_TRACKER_EVENT value, or FSM_EVENT_NULL if unknown
+ * @note - it might seem unnecessary but this enforces the idea of an FSM + readability
+ */
 FSM_TRACKER_EVENT map_msg_type_to_fsm_event(TrackerMessageType type)
 {
     switch (type)
@@ -802,7 +924,20 @@ FSM_TRACKER_EVENT map_msg_type_to_fsm_event(TrackerMessageType type)
         return FSM_EVENT_NULL;
     }
 }
-
+/**
+ * @brief Main FSM handler that directs execution based on current state
+ *
+ * This function implements the core state machine logic of the tracker by:
+ * 1. Examining the current state (ctx->current_state)
+ * 2. Calling the appropriate handler function for that state
+ * 
+ * For the HANDLE_EVENT state, it additionally:
+ * - Maps the message type to a corresponding FSM event
+ * - Passes the event to the event handler
+ *
+ * Each handler function is responsible for processing its state and
+ * transitioning to the next appropriate state.
+ */
 void tracker_fsm_handler()
 {
     switch (ctx->current_state)
@@ -894,6 +1029,23 @@ void tracker_init()
     ctx->current_state = TRACKER_FSM_COMMAND_MODE;
 }
 
+/**
+ * @brief Implements the command-line interface for tracker administration
+ *
+ * This function presents an interactive menu that allows administrators to:
+ * 1. Execute policy commands (e.g., blocking IPs, files, or regions)
+ * 2. Start the tracker in listening mode for peer connections
+ *
+ * Policy commands are parsed into Abstract Syntax Trees (ASTs) and then
+ * executed, allowing commands like:
+ * - BLOCK FILEHASH <hash> TO REGION <region>
+ * - BLOCK IP <ip_address>
+ * - And other policy enforcement commands
+ *
+ * This function handles its own memory management for input buffers
+ * and transitions the FSM to the appropriate next state based on
+ * user selection.
+ */
 void tracker_command_mode()
 {
     printf("Enter your command \n");
@@ -961,7 +1113,6 @@ void tracker_command_mode()
         }
     }
     free(input);
-
 }
 
 void tracker_close_peer()
@@ -973,7 +1124,22 @@ void tracker_close_peer()
     ctx->current_state = Tracker_FSM_LISTENING_PEER;
 }
 
-/* Main function */
+/* Main function 
+ * @brief Entry point for the tracker application
+ *
+ * This function:
+ * 1. Allocates and initializes the global tracker context
+ * 2. Calls the initialization function to set up the tracker
+ * 3. Enters the main FSM loop that drives the tracker's operation
+ * 4. Continues processing until the FSM reaches the closing state
+ * 5. Performs final cleanup before termination
+ *
+ * The FSM design allows the tracker to transition between different
+ * operational modes (command mode, listening, handling requests) 
+ * in a structured way.
+ *
+ * @return 0 on successful execution
+ */
 int main(void)
 {
     ctx = malloc(sizeof(TrackerContext));
@@ -993,6 +1159,6 @@ int main(void)
     {
         tracker_closing();
     }
-    
+
     return 0;
 }

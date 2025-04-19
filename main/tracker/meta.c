@@ -8,8 +8,9 @@
 #define CHUNK_SIZE 1024
 
 /*
-metadata should be in json format - readability
-filename should be given by User
+This file is fairly straightforward.
+CRUD metafiles 
+Generating the filepath for the metafile
 */
 
 

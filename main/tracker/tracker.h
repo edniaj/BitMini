@@ -85,6 +85,9 @@ typedef enum FSM_TRACKER_EVENT {
 /* --------------------------------------------------------------------------
    🔹 Structures and Types
    -------------------------------------------------------------------------- */
+/*
+We need to use the TrackerFSMState enum to track the current state of the tracker and trigger the correct function
+*/
 typedef struct {
     enum TrackerFSMState current_state;
     int listen_socket;
