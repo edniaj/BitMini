@@ -137,6 +137,7 @@ int peer_listening_peer();
 int peer_seeding();
 void peer_closing();
 void peer_cleanup();
+void peer_handle_error();
 void peer_fsm_handler();
 
 #endif // PEER_H

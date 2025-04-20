@@ -738,7 +738,10 @@ void tracker_cli_loop(int tracker_socket, char *ip_address, char *port)
 
                 disconnect_from_tracker(tracker_socket);
                 int result = leeching(seederList, num_seeders, metaFilePath, bitfieldPath, binary_filepath);
-
+                if (result == 1) {
+                    peer_ctx->current_state = Peer_FSM_ERROR;
+                    return;
+                }
                 tracker_socket = connect_to_tracker();
                 printf("Reconnected to tracker\n");
                 free(seederList);
@@ -1054,18 +1057,26 @@ void peer_fsm_handler()
             peer_ctx->current_state = Peer_FSM_LISTENING_PEER;
         }
         break;
-
-    case Peer_FSM_ERROR:
-        // Handle error state
-        break;
     case Peer_FSM_CLEANUP:
-        // Cleanup resources
+        peer_cleanup();
+        peer_ctx->current_state = Peer_FSM_CLOSING;
+        break;
+    case Peer_FSM_ERROR:
+        peer_handle_error();
+        peer_ctx->current_state = Peer_FSM_CLEANUP;
+        break;
+    case Peer_FSM_CLOSING:
+        peer_closing();
         break;
     default:
         break;
     }
 }
 
+void peer_handle_error() {
+    printf("Error occurred in peer.c\n");
+    return;
+}
 
 void peer_init()
 {
@@ -1141,9 +1152,24 @@ void peer_closing()
     }
 }
 
-void peer_cleanup()
-{
-    // Cleanup resources
+void peer_cleanup() {
+    printf("peer_cleanup\n");
+    if (!peer_ctx) {
+        return;  // Nothing to clean if peer_ctx is NULL
+    }
+    
+    // Close any open file descriptors
+    if (peer_ctx->leecher_fd >= 0) {
+        close(peer_ctx->leecher_fd);
+        peer_ctx->leecher_fd = -1;
+    }
+
+    if (peer_ctx->tracker_fd >= 0) {
+        close(peer_ctx->tracker_fd);
+        peer_ctx->tracker_fd = -1;
+    }
+    peer_ctx->current_state = Peer_FSM_CLOSING;
+
 }
 
 int main()
