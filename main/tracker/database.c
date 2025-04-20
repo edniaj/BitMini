@@ -260,11 +260,7 @@ FileEntry *load_file_entries(size_t *outCount)
     return entries;
 }
 
-// --------------------------------------------------------
-//  8) scan_and_add_files()
-//     Scans the `records/` folder for .meta files, loads
-//     their metadata, and appends an entry to meta.log if needed
-// --------------------------------------------------------
+
 void scan_and_add_files()
 {
     DIR *dir = opendir(RECORDS_FOLDER);
@@ -303,3 +299,15 @@ void scan_and_add_files()
 
     closedir(dir);
 }
+
+// int main() {
+//     FILE *fp = fopen(META_LOG_FILE, "wb"); // 'wb' creates/truncates the file
+//     if (!fp) {
+//         perror("Failed to create empty meta.log");
+//         return EXIT_FAILURE;
+//     }
+
+//     printf("✅ Created an empty meta.log file.\n");
+//     fclose(fp);
+//     return EXIT_SUCCESS;
+// }

@@ -37,6 +37,8 @@ gcc meta.c database.c tracker.c parser.c -o tracker -lssl -lcrypto -Wno-deprecat
 peer
 gcc peer.c database.c meta.c bitfield.c seed.c leech.c peerCommunication.c -o peer -lssl -lcrypto -Wno-deprecated-declarations && ./peer
 
+gcc database.c meta.c -o database -lssl -lcrypto -Wno-deprecated-declarations && ./database
+
 
 Docker
 gcc parser.c parser.h -o parser && ./parser
