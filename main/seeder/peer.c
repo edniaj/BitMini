@@ -38,8 +38,8 @@ GENERAL NOTES:
 #include "peer.h"
 #include "peerCommunication.h"
 
-  - very important file, the metafile standard is the backbone of our p2p protocol system
-*/
+
+
 #define STORAGE_DIR "./storage_downloads/"
 #define CHUNK_DATA_SIZE 1024
 
@@ -1060,9 +1060,6 @@ void peer_fsm_handler()
         break;
     case Peer_FSM_CLEANUP:
         // Cleanup resources
-        break;
-    case Peer_FSM_CLOSING:
-        // Handle closing operations
         break;
     default:
         break;

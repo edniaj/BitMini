@@ -28,6 +28,7 @@ peer: $(PEER_OBJS)
 # Generic rule to compile .c → .o
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
 # Run tracker
 .PHONY: run-tracker
 run-tracker: tracker

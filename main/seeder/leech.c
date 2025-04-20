@@ -210,7 +210,7 @@ int write_chunk_to_file(const char *binary_filepath, const TransferChunk *chunk)
     }
 
     // Write chunk data
-    size_t written = fwrite(chunk->chunkData, 1, chunk->totalByte, fp);
+    ssize_t written = fwrite(chunk->chunkData, 1, chunk->totalByte, fp);
     if (written != chunk->totalByte)
     {
         perror("ERROR writing chunk data");
@@ -440,7 +440,7 @@ int leeching(PeerInfo *seeder_list, size_t num_seeders, char *metadata_filepath,
     printf("💾 Binary file: %s\n", binary_filepath);
     printf("👥 Number of seeders: %zu\n\n", num_seeders);
 
-    int index = 0;
+    size_t index = 0;
     FileMetadata *fileMetaData = malloc(sizeof(FileMetadata));
 
     read_metadata(metadata_filepath, fileMetaData);
@@ -459,7 +459,7 @@ int leeching(PeerInfo *seeder_list, size_t num_seeders, char *metadata_filepath,
 
     for (index = 0; index < num_seeders; index++)
     {
-        printf("\n🔄 Attempting to leech from seeder %d of %zu\n", index + 1, num_seeders);
+        printf("\n🔄 Attempting to leech from seeder %ld of %zu\n", index + 1, num_seeders);
         leech_from_seeder(seeder_list[index], bitfield_filepath, binary_filepath, fileMetaData->totalChunk, fileMetaData->fileID);
         // if all chunks are downloaded then we break
         // else we continue

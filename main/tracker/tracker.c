@@ -1162,3 +1162,8 @@ int main(void)
 
     return 0;
 }
+
+/*
+4d4e64929eb11c3170ef3125593ac8df5ebc14b2bb693b253e71220dd5258ee8
+we will use this filehash (gray_cat.png) during the demo to show that the tracker can block a file
+*/
