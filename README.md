@@ -2,6 +2,9 @@
 
 BitMini is a lightweight peer-to-peer file sharing system inspired by BitTorrent protocols. It features a tracker for coordinating peers and a peer application for seeding and leeching files.
 
+# DEMO EXAMPLE
+https://www.youtube.com/watch?v=---rbbDYTvY
+
 ## Requirements
 
 - C compiler (GCC recommended)
