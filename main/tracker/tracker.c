@@ -1101,14 +1101,12 @@ void tracker_command_mode()
             }
 
             execute_ast(ast, -1, NULL);
-            free(input);
             free_ast(ast);
             break;
         }
 
         case 2:
             ctx->current_state = TRACKER_FSM_SET_UP_LISTENING;
-            free(input);
             return;
         }
     }
