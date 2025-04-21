@@ -2,7 +2,6 @@
 #define PARSER_H
 
 #include <stdint.h>
-#include "tracker.h"
 
 typedef enum
 {

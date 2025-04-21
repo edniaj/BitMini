@@ -34,8 +34,8 @@ char *region_name[] = {
     "CHINA",
     "RUSSIA",
     "IRAN"
-    
-    };
+
+};
 
 /*
 
@@ -409,8 +409,10 @@ ASTNode *parse_command(const char *command)
         !strcasecmp(tok, "FILE"))
         subject = SUBJECT_FILE;
     else if (!strcasecmp(tok, "CONNECTION") ||
-             !strcasecmp(tok, "PEER")) || !strcasecmp(tok,"IP"))
-        subject = SUBJECT_CONNECTION;
+             !strcasecmp(tok, "PEER") || !strcasecmp(tok,"IP") )
+        {
+            subject = SUBJECT_CONNECTION;
+        }
     else
     {
         free(tok);

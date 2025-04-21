@@ -266,7 +266,7 @@ int update_bitfield(const char *bitfield_filepath, ssize_t chunkIndex)
     if (fseek(fp, byte_offset, SEEK_SET) != 0 ||
         fwrite(&current_byte, 1, 1, fp) != 1)
     {
-        perror("ERROR writing bitfield");
+        perror("ERROR writing bitfield")x;
         fclose(fp);
         return -1;
     }
