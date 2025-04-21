@@ -50,5 +50,5 @@ docker build -t c-dev-env .
 docker exec -it c-devbox bash
 
 
-4d4e64929eb11c3170ef3125593ac8df5ebc14b2bb693b253e71220dd5258ee8
+BLOCK FILEHASH 4d4e64929eb11c3170ef3125593ac8df5ebc14b2bb693b253e71220dd5258ee8
 we will use this filehash (gray_cat.png) and block this 
