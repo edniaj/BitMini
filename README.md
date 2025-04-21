@@ -135,3 +135,5 @@ BitMini uses the following default ports:
 - **5555**: Tracker server port
 - **6000-6002**: Peer communication ports
 
+## Archive
+/development_archive/ - this folder is an archive of past iterative development before we reached our final version.
