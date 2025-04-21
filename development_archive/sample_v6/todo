@@ -1,0 +1,9 @@
+create_new_seed -> Creates bitfield (done)
+
+Seeder -> Add himself to the file that he wants to seed (done)
+Leecher -> request seeder list based on fileID  (done)
+Tracker -> ack request seeder list based on fileID (done)
+
+Leecher start seeding from multiple host (do this)
+
+
